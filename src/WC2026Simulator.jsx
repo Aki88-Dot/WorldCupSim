@@ -568,12 +568,12 @@ export default function WC2026() {
   }, []);
 
   if (!data) return (
-    <div style={{ minHeight: '100vh', background: '#06091A', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace' }}>
+    <div style={{ minHeight: '100vh', background: 'radial-gradient(900px 460px at 50% 30%, #243667 0%, rgba(36,54,103,0) 65%), linear-gradient(168deg,#131C42,#0B1029)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace' }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
       <div style={{ fontSize: '3rem', animation: 'spin 1.5s linear infinite' }}>⚽</div>
-      <div style={{ color: '#FFD700', fontWeight: 700, fontSize: '1rem', letterSpacing: '0.2em', marginTop: '20px' }}>SIMULATING TOURNAMENT</div>
-      <div style={{ color: '#2A4A7A', fontSize: '0.72rem', marginTop: '8px', letterSpacing: '0.1em' }}>5,000 MONTE CARLO ITERATIONS · 104 GAMES EACH</div>
-      <div style={{ color: '#1A3060', fontSize: '0.65rem', marginTop: '4px' }}>Poisson xG model · Injury adjustments · Bracket projection</div>
+      <div style={{ color: '#FFCE3A', fontWeight: 700, fontSize: '1rem', letterSpacing: '0.2em', marginTop: '20px' }}>SIMULATING TOURNAMENT</div>
+      <div style={{ color: '#93A4CC', fontSize: '0.72rem', marginTop: '8px', letterSpacing: '0.1em' }}>5,000 MONTE CARLO ITERATIONS · 104 GAMES EACH</div>
+      <div style={{ color: '#62749F', fontSize: '0.65rem', marginTop: '4px' }}>Poisson xG model · Injury adjustments · Bracket projection</div>
     </div>
   );
 
@@ -583,19 +583,26 @@ export default function WC2026() {
   const maxWP = data.winProbs[0]?.p || 1;
 
   // ── STYLES ──
-  const bg = '#06091A', card = '#090E20', border = '#151F35';
-  const gold = '#F5C518', silver = '#A8B8CC', dim = '#2A3A5A', dimmer = '#151F35';
-  const green = '#22C55E', amber = '#F59E0B', red = '#EF4444';
+  // Brighter, more vibrant palette: lifted text tones for readability, a
+  // richer royal-blue ground with a soft top glow, and clearer card/borders.
+  const bg = '#0C1330', card = '#16213F', border = '#2C3D66';
+  const gold = '#FFCE3A', silver = '#D8E2F7', dim = '#93A4CC', dimmer = '#62749F';
+  const green = '#34D399', amber = '#FBBF24', red = '#F87171', accent = '#3DA9FC';
   const font = "'Courier New', Courier, monospace";
 
   const sx = {
-    app: { minHeight: '100vh', background: bg, fontFamily: font, color: silver },
-    hdr: { background: 'linear-gradient(180deg,#0B1028 0%,#06091A 100%)', borderBottom: `1px solid ${border}`, padding: '20px 20px 0' },
-    card: { background: card, border: `1px solid ${border}`, padding: '14px' },
+    app: {
+      minHeight: '100vh',
+      background: 'radial-gradient(1100px 520px at 50% -8%, #243667 0%, rgba(36,54,103,0) 62%), linear-gradient(168deg,#131C42 0%, #0E1534 52%, #0B1029 100%)',
+      backgroundColor: '#0C1330', backgroundAttachment: 'fixed',
+      fontFamily: font, color: silver,
+    },
+    hdr: { background: 'linear-gradient(180deg, rgba(40,58,110,0.55) 0%, rgba(12,19,48,0) 100%)', borderBottom: `1px solid ${border}`, padding: '20px 20px 0' },
+    card: { background: card, border: `1px solid ${border}`, padding: '14px', borderRadius: '8px' },
     label: { fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: dim },
-    tab: { background: 'none', border: 'none', padding: '11px 16px', fontFamily: font, fontSize: '0.75rem', cursor: 'pointer', letterSpacing: '0.08em', borderBottom: '2px solid transparent', transition: 'all .15s' },
-    rndBtn: { background: 'none', border: 'none', padding: '8px 12px', fontFamily: font, fontSize: '0.7rem', cursor: 'pointer', letterSpacing: '0.1em', borderBottom: '2px solid transparent', transition: 'all .15s' },
-    grpBtn: { background: 'none', border: `1px solid ${border}`, color: dim, padding: '5px 10px', fontFamily: font, cursor: 'pointer', fontSize: '0.72rem', transition: 'all .15s', letterSpacing: '0.05em' },
+    tab: { background: 'none', border: 'none', padding: '11px 16px', fontFamily: font, fontSize: '0.75rem', cursor: 'pointer', letterSpacing: '0.08em', borderBottom: '2px solid transparent', transition: 'all .18s ease' },
+    rndBtn: { background: 'none', border: 'none', padding: '8px 12px', fontFamily: font, fontSize: '0.7rem', cursor: 'pointer', letterSpacing: '0.1em', borderBottom: '2px solid transparent', borderRadius: '6px 6px 0 0', transition: 'all .18s ease' },
+    grpBtn: { background: 'none', border: `1px solid ${border}`, color: dim, padding: '5px 10px', fontFamily: font, cursor: 'pointer', fontSize: '0.72rem', borderRadius: '6px', transition: 'all .18s ease' , letterSpacing: '0.05em' },
     bar: { height: '3px', background: dimmer, borderRadius: '2px', overflow: 'hidden' },
     mono: { fontFamily: font },
   };
@@ -617,7 +624,7 @@ export default function WC2026() {
 
     return (
       <div onClick={() => setExpanded(open ? null : key)}
-        style={{ ...sx.card, cursor: 'pointer', borderColor: open ? '#2A4A7A' : border, marginBottom: 0, transition: 'border-color .15s' }}>
+        style={{ ...sx.card, cursor: 'pointer', borderColor: open ? accent : border, marginBottom: 0, transition: 'border-color .15s' }}>
         <div style={{ ...sx.label, marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{roundLabel} {isGroupGame ? `· Match ${idx + 1}` : `· #${idx + 1}`}</span>
           {g.label && <span style={{ color: dimmer, fontSize: '0.55rem' }}>{g.label}</span>}
@@ -690,8 +697,8 @@ export default function WC2026() {
     return (
       <div>
         {/* Champion card */}
-        <div style={{ ...sx.card, border: `2px solid ${gold}`, marginBottom: '16px', background: 'linear-gradient(135deg,#0C1528,#06091A)' }}>
-          <div style={{ ...sx.label, color: '#A08010', marginBottom: '12px' }}>◈ Monte Carlo Champion — {NSIMS.toLocaleString()} Simulations</div>
+        <div style={{ ...sx.card, border: `2px solid ${gold}`, marginBottom: '16px', background: 'linear-gradient(135deg,#1B2A55,#101A3C)' }}>
+          <div style={{ ...sx.label, color: '#D7B24A', marginBottom: '12px' }}>◈ Monte Carlo Champion — {NSIMS.toLocaleString()} Simulations</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'flex-start' }}>
             {/* Winner */}
             <div style={{ textAlign: 'center', minWidth: '110px' }}>
@@ -724,7 +731,7 @@ export default function WC2026() {
             {/* Final matchup */}
             <div style={{ minWidth: '200px' }}>
               <div style={{ ...sx.label, marginBottom: '8px' }}>Predicted final</div>
-              <div style={{ background: '#060912', border: `1px solid ${border}`, padding: '10px', marginBottom: '10px' }}>
+              <div style={{ background: '#0F1733', border: `1px solid ${border}`, padding: '10px', marginBottom: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
                   <span style={{ fontSize: '1.4rem' }}>{F(winner)}</span>
                   <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.8rem' }}>{winner}</span>
@@ -788,11 +795,11 @@ export default function WC2026() {
       <div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '16px' }}>
           {Object.keys(GS).map(g => (
-            <button key={g} onClick={() => setGrp(g)} style={{
+            <button key={g} onClick={() => setGrp(g)} className={`wc-grp${grp === g ? ' on' : ''}`} style={{
               ...sx.grpBtn,
-              background: grp === g ? '#0D1E40' : 'none',
+              background: grp === g ? 'linear-gradient(135deg,#1B2E5E,#16264E)' : 'none',
               color: grp === g ? gold : dim,
-              borderColor: grp === g ? '#2A4A7A' : border,
+              borderColor: grp === g ? gold : border,
             }}>
               {g}
             </button>
@@ -812,7 +819,7 @@ export default function WC2026() {
             </thead>
             <tbody>
               {standing.map((row, i) => (
-                <tr key={row.t} style={{ borderBottom: `1px solid #0C1020`, background: i < 2 ? '#0B1530' : i === 2 ? '#0A1020' : 'none' }}>
+                <tr key={row.t} style={{ borderBottom: `1px solid #223354`, background: i < 2 ? '#1A2950' : i === 2 ? '#141E40' : 'none' }}>
                   <td style={{ padding: '7px 8px', color: i < 2 ? green : i === 2 ? amber : red, fontSize: '0.65rem', fontWeight: 700 }}>
                     {i < 2 ? '▲' : i === 2 ? '◆' : '▼'}
                   </td>
@@ -865,10 +872,11 @@ export default function WC2026() {
         {/* Round selector */}
         <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, marginBottom: '16px', flexWrap: 'wrap' }}>
           {[['r32','R32',16],['r16','R16',8],['qf','QF',4],['sf','SF',2],['final','Final',2]].map(([id, label, n]) => (
-            <button key={id} onClick={() => setRnd(id)} style={{
+            <button key={id} onClick={() => setRnd(id)} className="wc-rnd" style={{
               ...sx.rndBtn,
               color: rnd === id ? gold : dim,
               borderBottomColor: rnd === id ? gold : 'transparent',
+              background: rnd === id ? 'rgba(255,206,58,0.08)' : 'none',
               marginBottom: '-1px',
             }}>
               {label} <span style={{ fontSize: '0.58rem', color: dimmer }}>·{n}</span>
@@ -883,7 +891,7 @@ export default function WC2026() {
         {rnd === 'final' ? (
           <div>
             {/* THE FINAL — special treatment */}
-            <div style={{ ...sx.card, border: `2px solid ${gold}`, marginBottom: '16px', background: 'linear-gradient(135deg,#0C1528,#06091A)', position: 'relative' }}>
+            <div style={{ ...sx.card, border: `2px solid ${gold}`, marginBottom: '16px', background: 'linear-gradient(135deg,#1B2A55,#101A3C)', position: 'relative' }}>
               <div style={{ textAlign: 'center', marginBottom: '10px' }}>
                 <span style={{ background: gold, color: '#000', fontSize: '0.6rem', fontWeight: 900, padding: '3px 12px', letterSpacing: '0.2em' }}>🏆 THE FINAL · MetLife Stadium · July 19</span>
               </div>
@@ -955,7 +963,7 @@ export default function WC2026() {
             <span style={{ color: dimmer, fontSize: '0.68rem', width: '20px', textAlign: 'right' }}>{i + 1}</span>
             <span style={{ fontSize: '1rem', width: '22px', textAlign: 'center' }}>{F(x.t)}</span>
             <span style={{ width: '110px', fontSize: '0.78rem', color: i < 3 ? '#fff' : silver, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.t}</span>
-            <div style={{ flex: 1, height: '10px', background: '#0A1020', position: 'relative', borderRadius: '1px' }}>
+            <div style={{ flex: 1, height: '10px', background: '#101A3A', position: 'relative', borderRadius: '1px' }}>
               <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: `${x.p / maxWP * 100}%`, background: i === 0 ? `linear-gradient(90deg,${C(x.t)},${gold})` : C(x.t) + '77', transition: 'width 1.2s ease' }} />
             </div>
             <span style={{ width: '42px', textAlign: 'right', color: i === 0 ? gold : i < 3 ? silver : dim, fontWeight: i < 3 ? 700 : 400, fontSize: '0.8rem' }}>{x.p}%</span>
@@ -976,7 +984,7 @@ export default function WC2026() {
           </thead>
           <tbody>
             {data.reachProbs.map((row, i) => (
-              <tr key={row.t} style={{ borderBottom: `1px solid #0A1020` }}>
+              <tr key={row.t} style={{ borderBottom: `1px solid #1A2746` }}>
                 <td style={{ padding: '6px 8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '0.9rem' }}>{F(row.t)}</span>
@@ -1012,7 +1020,7 @@ export default function WC2026() {
         ].map((line, i) => (
           <div key={i} style={{ paddingLeft: '10px', borderLeft: `2px solid ${border}`, marginBottom: '4px' }}>→ {line}</div>
         ))}
-        <div style={{ marginTop: '10px', color: '#1A2A3A', fontSize: '0.6rem' }}>
+        <div style={{ marginTop: '10px', color: dimmer, fontSize: '0.6rem' }}>
           For entertainment purposes only. Predictions inherently uncertain. Please gamble responsibly.
         </div>
       </div>
@@ -1024,11 +1032,22 @@ export default function WC2026() {
     <div style={sx.app}>
       <style>{`
         *{box-sizing:border-box;margin:0;padding:0}
-        button:hover{opacity:.8}
-        ::-webkit-scrollbar{width:4px;height:4px}
-        ::-webkit-scrollbar-track{background:#06091A}
-        ::-webkit-scrollbar-thumb{background:#151F35;border-radius:2px}
+        button{transition:all .18s ease}
+        ::-webkit-scrollbar{width:6px;height:6px}
+        ::-webkit-scrollbar-track{background:#0B1029}
+        ::-webkit-scrollbar-thumb{background:#34487A;border-radius:3px}
+        ::-webkit-scrollbar-thumb:hover{background:#3DA9FC}
         @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+        /* Dynamic tabs */
+        .wc-tab:hover{color:#FFE07A !important;background:rgba(61,169,252,0.10) !important}
+        .wc-tab.on{background:rgba(255,206,58,0.08) !important}
+        /* Dynamic round pills */
+        .wc-rnd:hover{color:#FFE07A !important;background:rgba(61,169,252,0.12) !important}
+        /* Dynamic group chips — lift + glow */
+        .wc-grp:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(61,169,252,0.28);border-color:#3DA9FC !important;color:#EAF1FF !important}
+        .wc-grp.on{box-shadow:0 4px 14px rgba(255,206,58,0.22)}
+        /* Cards gently respond */
+        .wc-press:active{transform:scale(0.997)}
       `}</style>
 
       {/* Header */}
@@ -1052,7 +1071,7 @@ export default function WC2026() {
         {/* Tab bar */}
         <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, gap: 0, overflowX: 'auto' }}>
           {[['prediction','🏆 Prediction'],['groups','⚽ Group Stage'],['bracket','🏅 Bracket'],['stats','📊 Statistics']].map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)} style={{
+            <button key={id} onClick={() => setTab(id)} className={`wc-tab${tab === id ? ' on' : ''}`} style={{
               ...sx.tab,
               color: tab === id ? gold : dim,
               borderBottomColor: tab === id ? gold : 'transparent',
