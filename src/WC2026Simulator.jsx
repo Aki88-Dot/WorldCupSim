@@ -231,13 +231,42 @@ function predScGroup(tA, tB, ctx = {}) {
   return { gA, gB, score: `${gA}-${gB}`, prob, m };
 }
 
-// Knockout game: always decisive. Scoreline matches the simulated winner
-// (the slot's most frequent victor), shown in tA–tB display order.
+// Knockout game. Mirrors the real flow the simulation engine already uses
+// for win probabilities: 90 minutes → extra time → penalty shootout if still
+// level. The predicted advancer is never shown losing, but a tight tie can
+// finish level and be settled on penalties — so close matchups (a France–
+// Spain final) surface "(a.e.t.) · won on penalties" while lopsided ties are
+// decided in normal time. Returns the regulation/ET scoreline plus an
+// extra-time flag and, when it goes the distance, the shootout result.
 function predScKO(tA, tB, winner, ctx = {}) {
   const m = analyzeMatch(tA, tB, ctx);
-  const result = winner === tA ? 'A' : winner === tB ? 'B' : (m.xgA >= m.xgB ? 'A' : 'B');
-  const [gA, gB] = sampleScore(m, result, `${tA}|${tB}|${winner}`);
-  return `${gA}-${gB}`;
+  const winA = winner === tA || (winner !== tB && m.xgA >= m.xgB);
+  const rng = mulberry32(seedStr(`${tA}|${tB}|${winner}|ko`));
+
+  // Settled inside 90 minutes? Use the genuine draw probability for this tie.
+  if (rng() > m.pDraw) {
+    const [gA, gB] = sampleScore(m, winA ? 'A' : 'B', `${tA}|${tB}|${winner}|reg`);
+    return { score: `${gA}-${gB}`, aet: false, pens: null };
+  }
+
+  // Level after 90 → extra time. Take a plausible level score to carry in.
+  const [lvl] = sampleScore(m, 'D', `${tA}|${tB}|${winner}|draw`);
+
+  // Does extra time break the deadlock, or do we go to spot-kicks? Roughly
+  // half of WC ties reaching ET are settled before penalties; higher-scoring
+  // sides break it slightly more often.
+  const pETwin = Math.min(0.6, Math.max(0.35, 0.45 + (m.xgA + m.xgB - 2.4) * 0.1));
+  if (rng() < pETwin) {
+    const wa = winA ? lvl + 1 : lvl, wb = winA ? lvl : lvl + 1;
+    return { score: `${wa}-${wb}`, aet: true, pens: null };
+  }
+
+  // Still level → penalty shootout. The predicted winner takes it.
+  // Stored winner-first so "{winner} win {pens} on penalties" always reads right.
+  const winP = 3 + Math.floor(rng() * 3);          // 3–5
+  let loseP = winP - (1 + Math.floor(rng() * 2));  // 1–2 fewer
+  if (loseP < 0) loseP = 0;
+  return { score: `${lvl}-${lvl}`, aet: true, pens: `${winP}-${loseP}` };
 }
 
 // ── GROUP STAGE SIMULATION ────────────────────────────────────────
@@ -444,38 +473,66 @@ function runMC() {
     'Best 3rd · #1 vs #2','Best 3rd · #3 vs #4',
     'Best 3rd · #5 vs #6','Best 3rd · #7 vs #8',
   ];
-  // Build a KO slot. `used` tracks teams already placed in this round so a
-  // team never appears in two ties — and crucially never plays ITSELF (which
-  // happened when one team topped both sides of a best-3rd-place slot).
-  const buildKO = (rnd, idx, used = new Set()) => {
-    const sortedA = Object.entries(koA[rnd][idx]).sort((a, b) => b[1] - a[1]);
-    const sortedB = Object.entries(koB[rnd][idx]).sort((a, b) => b[1] - a[1]);
-    const tA = (sortedA.find(([t]) => !used.has(t)) || sortedA[0] || ['?'])[0];
-    used.add(tA);
-    const tB = (sortedB.find(([t]) => t !== tA && !used.has(t))
-              || sortedB.find(([t]) => t !== tA) || sortedB[0] || ['?'])[0];
-    used.add(tB);
-    const rawW = top(koW[rnd][idx]);
-    const winner = (rawW === tA || rawW === tB) ? rawW
-                 : ((koW[rnd][idx][tA] || 0) >= (koW[rnd][idx][tB] || 0) ? tA : tB);
-    const pA = (koA[rnd][idx][tA] || 0) / NSIMS;
-    const pB = (koB[rnd][idx][tB] || 0) / NSIMS;
-    const winP = (koW[rnd][idx][winner] || 0) / NSIMS;
-    const winPA = (koW[rnd][idx][tA] || 0) / Math.max(1, koA[rnd][idx][tA] || 1);
-    const altA = sortedA.slice(0, 4).map(([t, c]) => ({ t, p: +(c / NSIMS * 100).toFixed(0) }));
-    const altB = sortedB.slice(0, 4).map(([t, c]) => ({ t, p: +(c / NSIMS * 100).toFixed(0) }));
-    return { tA, tB, score: predScKO(tA, tB, winner), winner, winP, pA, pB, winPA: +winPA.toFixed(2), altA, altB };
-  };
+  // ── COHERENT THREADED BRACKET ──────────────────────────────────────
+  // The bracket is built as ONE real tournament path, not an independent
+  // "most likely team per slot" montage (which let a team appear to lose in
+  // one round yet reappear in the next). Participants come from the predicted
+  // group standings; each tie's winner is carried forward as the next round's
+  // entrant. This makes it structurally impossible for an eliminated team to
+  // advance, for a team to play itself, or for a duplicate matchup to occur:
+  // every game's two teams are the winners of two DISTINCT feeder games.
 
-  const usedR32 = new Set(), usedR16 = new Set(), usedQF = new Set(), usedSF = new Set(), usedFT = new Set();
-  const bracket = {
-    r32: Array.from({ length: 16 }, (_, i) => ({ ...buildKO('r32', i, usedR32), label: r32Labels[i] })),
-    r16: Array.from({ length: 8 }, (_, i) => buildKO('r16', i, usedR16)),
-    qf:  Array.from({ length: 4 }, (_, i) => buildKO('qf', i, usedQF)),
-    sf:  Array.from({ length: 2 }, (_, i) => buildKO('sf', i, usedSF)),
-    final: buildKO('f', 0, usedFT),
-    tp: buildKO('tp', 0, usedFT),
+  // Qualifiers straight from the predicted group tables (so the bracket is
+  // consistent with the standings shown on the Groups tab).
+  const q = {};
+  for (const g of Object.keys(GS)) q[g] = { p1: groupStandings[g][0].t, p2: groupStandings[g][1].t };
+  const thirdsRanked = Object.keys(GS)
+    .map(g => ({ g, ...groupStandings[g][2] }))
+    .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf)
+    .slice(0, 8).map(x => x.t);
+
+  const r32pairs = [
+    [q.A.p1, q.B.p2], [q.B.p1, q.A.p2], [q.C.p1, q.D.p2], [q.D.p1, q.C.p2],
+    [q.E.p1, q.F.p2], [q.F.p1, q.E.p2], [q.G.p1, q.H.p2], [q.H.p1, q.G.p2],
+    [q.I.p1, q.J.p2], [q.J.p1, q.I.p2], [q.K.p1, q.L.p2], [q.L.p1, q.K.p2],
+    [thirdsRanked[0], thirdsRanked[1]], [thirdsRanked[2], thirdsRanked[3]],
+    [thirdsRanked[4], thirdsRanked[5]], [thirdsRanked[6], thirdsRanked[7]],
+  ];
+
+  // Head-to-head advancement probability for tA (regulation win + a share of
+  // the draw, resolved in extra time / penalties proportional to strength).
+  const advProbA = (tA, tB) => {
+    const m = analyzeMatch(tA, tB);
+    const denom = m.pWinA + m.pWinB || 1;
+    return m.pWinA + m.pDraw * (m.pWinA / denom);
   };
+  // Per-slot Monte Carlo context (who else tends to occupy this slot), kept
+  // purely as supplementary colour in the expanded card / alternates line.
+  const mcCtx = (rnd, idx, tA, tB) => {
+    const sA = (koA[rnd] && koA[rnd][idx]) || {}, sB = (koB[rnd] && koB[rnd][idx]) || {};
+    const top4 = o => Object.entries(o).sort((x, y) => y[1] - x[1]).slice(0, 4).map(([t, c]) => ({ t, p: +(c / NSIMS * 100).toFixed(0) }));
+    return { pA: (sA[tA] || 0) / NSIMS, pB: (sB[tB] || 0) / NSIMS, altA: top4(sA), altB: top4(sB) };
+  };
+  const koGame = (rnd, idx, tA, tB) => {
+    const aAdv = advProbA(tA, tB);
+    const winner = aAdv >= 0.5 ? tA : tB;
+    const ko = predScKO(tA, tB, winner);
+    const { pA, pB, altA, altB } = mcCtx(rnd, idx, tA, tB);
+    return {
+      tA, tB, winner, winPA: +aAdv.toFixed(2), winP: +Math.max(aAdv, 1 - aAdv).toFixed(2),
+      score: ko.score, aet: ko.aet, pens: ko.pens, pA, pB, altA, altB,
+    };
+  };
+  const loserOf = g => (g.tA === g.winner ? g.tB : g.tA);
+
+  // Thread winners forward, round by round.
+  const r32 = r32pairs.map(([a, b], i) => ({ ...koGame('r32', i, a, b), label: r32Labels[i] }));
+  const r16 = Array.from({ length: 8 }, (_, i) => koGame('r16', i, r32[2 * i].winner, r32[2 * i + 1].winner));
+  const qf  = Array.from({ length: 4 }, (_, i) => koGame('qf',  i, r16[2 * i].winner, r16[2 * i + 1].winner));
+  const sf  = Array.from({ length: 2 }, (_, i) => koGame('sf',  i, qf[2 * i].winner,  qf[2 * i + 1].winner));
+  const final = koGame('f', 0, sf[0].winner, sf[1].winner);
+  const tp = koGame('tp', 0, loserOf(sf[0]), loserOf(sf[1]));   // 3rd place = losing semi-finalists
+  const bracket = { r32, r16, qf, sf, final, tp };
 
   const winProbs = Object.entries(wf)
     .map(([t, c]) => ({ t, p: +(c / NSIMS * 100).toFixed(1) }))
@@ -553,6 +610,10 @@ export default function WC2026() {
     const pctB = isKO ? 100 - pctA : (g.wB != null ? g.wB : 100 - pctA);
     const pctD = isKO ? 0 : (g.dr != null ? g.dr : 0);
     const hasWinner = sA !== sB;
+    // Who advances — from the explicit winner for KO ties (covers penalty
+    // draws where the score is level), else from the scoreline itself.
+    const advA = g.winner ? g.winner === g.tA : sA > sB;
+    const advB = g.winner ? g.winner === g.tB : sB > sA;
 
     return (
       <div onClick={() => setExpanded(open ? null : key)}
@@ -567,21 +628,30 @@ export default function WC2026() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: '8px' }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '1.5rem', lineHeight: 1 }}>{F(g.tA)}</div>
-            <div style={{ fontSize: '0.72rem', color: hasWinner && sA > sB ? '#fff' : silver, marginTop: '4px', lineHeight: 1.2 }}>{g.tA}</div>
-            <div style={{ fontSize: '0.58rem', color: hasWinner && sA > sB ? gold : dim, marginTop: '3px' }}>{pctA}%</div>
+            <div style={{ fontSize: '0.72rem', color: advA ? '#fff' : silver, marginTop: '4px', lineHeight: 1.2 }}>{g.tA}</div>
+            <div style={{ fontSize: '0.58rem', color: advA ? gold : dim, marginTop: '3px' }}>{pctA}%</div>
           </div>
           <div style={{ textAlign: 'center', padding: '0 4px' }}>
             <div style={{ fontSize: '2rem', fontWeight: 900, color: '#fff', letterSpacing: '0.1em', lineHeight: 1 }}>
               {sA}<span style={{ color: dim, fontSize: '1.4rem', margin: '0 2px' }}>–</span>{sB}
             </div>
-            <div style={{ fontSize: '0.52rem', color: dimmer, letterSpacing: '0.12em', marginTop: '2px' }}>PREDICTED</div>
+            <div style={{ fontSize: '0.52rem', color: g.aet ? '#E8B45A' : dimmer, letterSpacing: '0.12em', marginTop: '2px' }}>
+              {g.pens ? 'A.E.T.' : g.aet ? 'A.E.T.' : 'PREDICTED'}
+            </div>
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '1.5rem', lineHeight: 1 }}>{F(g.tB)}</div>
-            <div style={{ fontSize: '0.72rem', color: hasWinner && sB > sA ? '#fff' : silver, marginTop: '4px', lineHeight: 1.2 }}>{g.tB}</div>
-            <div style={{ fontSize: '0.58rem', color: hasWinner && sB > sA ? gold : dim, marginTop: '3px' }}>{pctB}%</div>
+            <div style={{ fontSize: '0.72rem', color: advB ? '#fff' : silver, marginTop: '4px', lineHeight: 1.2 }}>{g.tB}</div>
+            <div style={{ fontSize: '0.58rem', color: advB ? gold : dim, marginTop: '3px' }}>{pctB}%</div>
           </div>
         </div>
+
+        {/* Penalty shootout line */}
+        {g.pens && (
+          <div style={{ textAlign: 'center', fontSize: '0.62rem', color: '#E8B45A', marginTop: '6px', letterSpacing: '0.04em' }}>
+            {g.winner} win {g.pens} on penalties
+          </div>
+        )}
 
         {/* Probability bar (3-way for group games, 2-way for knockouts) */}
         <div style={{ ...sx.bar, margin: '8px 0 4px', display: 'flex' }}>
@@ -635,13 +705,18 @@ export default function WC2026() {
               <div style={{ ...sx.label, marginBottom: '10px' }}>Predicted path to glory</div>
               {path.map(({ rnd, g }) => {
                 const opp = g.tA === winner ? g.tB : g.tA;
+                const [a, b] = g.score.split('-').map(Number);
+                const dispScore = g.tA === winner ? `${a}-${b}` : `${b}-${a}`;
+                const tag = g.pens ? ' pens' : g.aet ? ' aet' : '';
                 return (
                   <div key={rnd} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', fontSize: '0.75rem' }}>
                     <span style={{ color: dimmer, width: '42px', flexShrink: 0, fontSize: '0.6rem', letterSpacing: '0.08em' }}>{rnd}</span>
-                    <span style={{ color: dim, fontSize: '0.65rem' }}>def.</span>
+                    <span style={{ color: dim, fontSize: '0.65rem' }}>{g.pens ? 'bt' : 'def.'}</span>
                     <span style={{ fontSize: '1rem' }}>{F(opp)}</span>
                     <span style={{ color: silver, flex: 1 }}>{opp}</span>
-                    <span style={{ color: gold, fontWeight: 700, fontFamily: font }}>{g.score}</span>
+                    <span style={{ color: gold, fontWeight: 700, fontFamily: font }}>
+                      {dispScore}{tag && <span style={{ color: '#E8B45A', fontSize: '0.62rem', fontWeight: 400 }}>{tag}</span>}
+                    </span>
                   </div>
                 );
               })}
@@ -653,11 +728,15 @@ export default function WC2026() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center' }}>
                   <span style={{ fontSize: '1.4rem' }}>{F(winner)}</span>
                   <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.8rem' }}>{winner}</span>
-                  <span style={{ color: gold, fontWeight: 900, fontSize: '1.3rem', margin: '0 6px' }}>{data.bracket.final.score}</span>
+                  <span style={{ color: gold, fontWeight: 900, fontSize: '1.3rem', margin: '0 6px' }}>
+                    {(() => { const [a, b] = data.bracket.final.score.split('-').map(Number); return data.bracket.final.tA === winner ? `${a}-${b}` : `${b}-${a}`; })()}
+                  </span>
                   <span style={{ color: silver, fontSize: '0.8rem' }}>{finalist}</span>
                   <span style={{ fontSize: '1.4rem' }}>{F(finalist)}</span>
                 </div>
-                <div style={{ textAlign: 'center', fontSize: '0.58rem', color: dimmer, marginTop: '6px' }}>MetLife Stadium · July 19, 2026</div>
+                {data.bracket.final.pens
+                  ? <div style={{ textAlign: 'center', fontSize: '0.58rem', color: '#E8B45A', marginTop: '6px' }}>a.e.t. · won {data.bracket.final.pens} on penalties · MetLife Stadium</div>
+                  : <div style={{ textAlign: 'center', fontSize: '0.58rem', color: dimmer, marginTop: '6px' }}>{data.bracket.final.aet ? 'after extra time · ' : ''}MetLife Stadium · July 19, 2026</div>}
               </div>
               <div style={{ ...sx.label, marginBottom: '6px' }}>3rd place</div>
               <div style={{ fontSize: '0.75rem', color: dim }}>
@@ -816,7 +895,9 @@ export default function WC2026() {
                 </div>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: '2.8rem', fontWeight: 900, color: '#fff', letterSpacing: '0.15em', lineHeight: 1 }}>{data.bracket.final.score}</div>
-                  <div style={{ fontSize: '0.55rem', color: dimmer, letterSpacing: '0.15em', marginTop: '6px' }}>PREDICTED SCORE</div>
+                  <div style={{ fontSize: '0.55rem', color: data.bracket.final.aet ? '#E8B45A' : dimmer, letterSpacing: '0.15em', marginTop: '6px' }}>
+                    {data.bracket.final.aet ? 'AFTER EXTRA TIME' : 'PREDICTED SCORE'}
+                  </div>
                 </div>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: '3rem' }}>{F(data.bracket.final.tB)}</div>
@@ -824,6 +905,11 @@ export default function WC2026() {
                   <div style={{ color: data.bracket.final.winner === data.bracket.final.tB ? gold : dim, fontSize: '0.7rem', marginTop: '4px' }}>{100 - +(data.bracket.final.winPA * 100).toFixed(0)}% to lift the trophy</div>
                 </div>
               </div>
+              {data.bracket.final.pens && (
+                <div style={{ textAlign: 'center', fontSize: '0.72rem', color: '#E8B45A', fontWeight: 700, margin: '2px 0 8px', letterSpacing: '0.05em' }}>
+                  🏆 {data.bracket.final.winner} win {data.bracket.final.pens} on penalties
+                </div>
+              )}
               <div style={{ ...sx.bar, display: 'flex', margin: '10px 0 6px' }}>
                 <div style={{ width: `${+(data.bracket.final.winPA * 100).toFixed(0)}%`, height: '100%', background: C(data.bracket.final.tA) + 'CC' }} />
                 <div style={{ flex: 1, height: '100%', background: C(data.bracket.final.tB) + 'CC' }} />
