@@ -90,14 +90,49 @@ function pois(λ) {
   return k - 1;
 }
 
+// ── PLAYER-AVAILABILITY OVERLAY ───────────────────────────────────
+// Generalises the old hardcoded Yamal/Neymar tweaks into a data-driven
+// layer sourced from June 2026 squad/injury reporting (ESPN · Sports Mole ·
+// SI · Gulf News · Yahoo). Each entry carries an importance weight w (the
+// share of the team's attack or defence that player represents), a side,
+// and a status. 'out' removes the full weighted share, 'doubt' half of it.
+// The net effect is a bounded multiplier — at most −20% per side — so a
+// thin team losing a talisman is hit hard while a deep squad shrugs off a
+// fringe absence. Tournament-wide status (no per-stage timeline) for now.
+const ABSENCE = { out: 1, doubt: 0.5, fit: 0 };
+const PLAYERS = {
+  'Spain':     [{ n: 'Lamine Yamal', w: 0.15, side: 'att', status: 'doubt' }],   // hamstring, expected back but eased in
+  'Brazil':    [{ n: 'Neymar', w: 0.10, side: 'att', status: 'doubt' }],          // ongoing fitness doubts
+  'Germany':   [{ n: 'Serge Gnabry', w: 0.10, side: 'att', status: 'out' },       // thigh, out
+                { n: 'Marc-André ter Stegen', w: 0.06, side: 'def', status: 'out' }], // hamstring, out
+  'Japan':     [{ n: 'Kaoru Mitoma', w: 0.16, side: 'att', status: 'out' },       // hamstring, out
+                { n: 'Takumi Minamino', w: 0.06, side: 'att', status: 'out' }],   // ACL, out
+  'England':   [{ n: 'Jack Grealish', w: 0.05, side: 'att', status: 'out' },
+                { n: 'Jarrad Branthwaite', w: 0.06, side: 'def', status: 'out' },
+                { n: 'Ben White', w: 0.04, side: 'def', status: 'out' }],
+  'France':    [{ n: 'Hugo Ekitike', w: 0.03, side: 'att', status: 'out' }],      // deep squad, fringe — minimal
+  'Argentina': [{ n: 'Cristian Romero', w: 0.12, side: 'def', status: 'out' },    // knee, ruled out for season
+                { n: 'Juan Foyth', w: 0.04, side: 'def', status: 'out' }],
+  'Canada':    [{ n: 'Alphonso Davies', w: 0.13, side: 'att', status: 'doubt' }], // hamstring, race to be fit
+  'USA':       [{ n: 'Cameron Carter-Vickers', w: 0.06, side: 'def', status: 'out' },
+                { n: 'Chris Richards', w: 0.06, side: 'def', status: 'doubt' }],
+  'Algeria':   [{ n: 'Luca Zidane', w: 0.05, side: 'def', status: 'doubt' }],     // GK, facial injury
+};
+
 function getAD(team, ctx = {}) {
   let a = T[team].a, d = T[team].d;
   if (T[team].host) { a *= 1.09; d *= 1.07; }
-  // Injury: Yamal (Spain) out G1, doubtful G2 — ESPN/CBS Sports
-  if (team === 'Spain' && ctx.spN === 1) a *= 0.82;
-  if (team === 'Spain' && ctx.spN === 2) a *= 0.91;
-  // Neymar (Brazil) fitness concerns — Last Word on Sports
-  if (team === 'Brazil') a *= 0.95;
+  const roster = PLAYERS[team];
+  if (roster) {
+    let pa = 0, pd = 0;
+    for (const p of roster) {
+      const f = ABSENCE[p.status] || 0;
+      if (!f) continue;
+      if (p.side === 'def') pd += p.w * f; else pa += p.w * f;
+    }
+    a *= Math.max(0.80, 1 - pa);   // each side degraded by at most 20%
+    d *= Math.max(0.80, 1 - pd);
+  }
   return { a, d };
 }
 
@@ -1010,7 +1045,7 @@ export default function WC2026() {
         <div style={{ ...sx.label, color: dim, marginBottom: '8px' }}>Methodology & sources</div>
         {[
           `Dixon-Coles Poisson model: xG(A vs B) = att_A ÷ def_B × μ  where μ=${MU} (calibrated to 2022 WC 2.69/game + 2026 qualifiers 2.8–3.3/game)`,
-          'Injury modifiers: Spain G1 att×0.82 (Yamal hamstring, CBS Sports/ESPN), Spain G2 att×0.91, Brazil att×0.95 (Neymar fitness)',
+          'Player-availability layer: key absences/doubts (Yamal, Mitoma, Gnabry, Romero, Davies, ter Stegen, Grealish …) cut a team\u2019s attack or defence by each player\u2019s weighted share — capped at \u221220% per side. Sourced from June 2026 reporting (ESPN, Sports Mole, SI, Yahoo)',
           'Host advantage: Mexico/USA/Canada att×1.09 · def×1.07',
           'Knockout: 90min → Extra time (33% xG) → Penalty shootout (skill-weighted, ±15% from base 50%)',
           'Team ratings calibrated from: FIFA rankings (Apr 2026) · BetMGM/FanDuel/DraftKings implied probs · Polymarket $1.5B trading volume · ESPN Power Rankings',
