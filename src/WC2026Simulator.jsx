@@ -136,6 +136,56 @@ function getAD(team, ctx = {}) {
   return { a, d };
 }
 
+// ── LIVE RESULTS CONDITIONING ─────────────────────────────────────
+// As real games are played, record them here. The model then treats them
+// as FACTS — locking in completed matches and only simulating what hasn't
+// happened yet (group standings re-form around real results, the bracket
+// re-runs from the actual qualifiers). With this table empty, the output
+// is a pure pre-tournament projection; every entry sharpens the forecast.
+//
+//  • Group games: "TeamA|TeamB": [goalsA, goalsB]  (either team order works)
+//  • Knockout games: { a, b, ga, gb, pens?, win? }  (win names the advancer;
+//    only needed when a tie is settled on penalties / can't be inferred)
+//
+// Examples (commented out — fill in once the tournament kicks off):
+const RESULTS = {
+  group: {
+    // 'Brazil|Scotland': [2, 0],
+    // 'Spain|Uruguay':   [1, 1],
+  },
+  ko: [
+    // { a: 'France', b: 'Senegal', ga: 2, gb: 0 },
+    // { a: 'Spain', b: 'Germany', ga: 1, gb: 1, pens: '4-2', win: 'Spain' },
+  ],
+};
+
+// Completed group result for a pair, oriented to the (tA, tB) call order.
+function actualGroup(tA, tB) {
+  const r = RESULTS.group[`${tA}|${tB}`];
+  if (r) return { gA: r[0], gB: r[1] };
+  const r2 = RESULTS.group[`${tB}|${tA}`];
+  if (r2) return { gA: r2[1], gB: r2[0] };
+  return null;
+}
+// Completed knockout result for a pair, oriented to the (tA, tB) call order.
+function actualKO(tA, tB) {
+  for (const m of RESULTS.ko) {
+    let gA, gB;
+    if (m.a === tA && m.b === tB) { gA = m.ga; gB = m.gb; }
+    else if (m.a === tB && m.b === tA) { gA = m.gb; gB = m.ga; }
+    else continue;
+    const winner = m.win || (gA > gB ? tA : gB > gA ? tB : tA);
+    // Penalty score stored in the entry's a-b order; output winner-first so
+    // "{winner} win {pens} on penalties" always reads correctly.
+    const pens = m.pens
+      ? (winner === m.a ? m.pens : m.pens.split('-').reverse().join('-'))
+      : null;
+    return { gA, gB, winner, pens, aet: gA === gB };
+  }
+  return null;
+}
+const N_RESULTS = () => Object.keys(RESULTS.group).length + RESULTS.ko.length;
+
 function sg(tA, tB, ko = false, ctx = {}) {
   const { a: aA, d: dA } = getAD(tA, ctx);
   const { a: aB, d: dB } = getAD(tB, ctx);
@@ -314,14 +364,21 @@ function simGrp(g) {
   const fx = [];
   for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) fx.push([teams[i], teams[j]]);
   fx.forEach(([tA, tB]) => {
-    const ctx = {};
-    if (tA === 'Spain' || tB === 'Spain') ctx.spN = ++spN;
-    const r = sg(tA, tB, false, ctx);
-    scores.push({ tA, tB, gA: r.gA, gB: r.gB });
-    gf[tA] += r.gA; gf[tB] += r.gB;
-    gd[tA] += (r.gA - r.gB); gd[tB] += (r.gB - r.gA);
-    if (r.gA > r.gB) pts[tA] += 3;
-    else if (r.gB > r.gA) pts[tB] += 3;
+    let gA, gB;
+    const act = actualGroup(tA, tB);
+    if (act) {                       // completed game — lock in the real score
+      gA = act.gA; gB = act.gB;
+    } else {                         // not played yet — simulate
+      const ctx = {};
+      if (tA === 'Spain' || tB === 'Spain') ctx.spN = ++spN;
+      const r = sg(tA, tB, false, ctx);
+      gA = r.gA; gB = r.gB;
+    }
+    scores.push({ tA, tB, gA, gB });
+    gf[tA] += gA; gf[tB] += gB;
+    gd[tA] += (gA - gB); gd[tB] += (gB - gA);
+    if (gA > gB) pts[tA] += 3;
+    else if (gB > gA) pts[tB] += 3;
     else { pts[tA]++; pts[tB]++; }
   });
   const standings = teams
@@ -360,6 +417,9 @@ function runMC() {
     koW[rnd] = Array.from({ length: n }, () => ({}));
   });
 
+  // Play a knockout tie: lock in a completed result if recorded, else simulate.
+  const koPlay = (a, b) => { const act = actualKO(a, b); return act ? { w: act.winner } : sg(a, b, true); };
+
   for (let s = 0; s < NSIMS; s++) {
     const gr = {}; for (const g of Object.keys(GS)) gr[g] = simGrp(g);
 
@@ -390,7 +450,7 @@ function runMC() {
       [q.I.p1,q.J.p2],[q.J.p1,q.I.p2],[q.K.p1,q.L.p2],[q.L.p1,q.K.p2],
       [th[0],th[1]],[th[2],th[3]],[th[4],th[5]],[th[6],th[7]],
     ];
-    const r32r = r32.map(([a, b]) => sg(a, b, true));
+    const r32r = r32.map(([a, b]) => koPlay(a, b));
     const r32w = r32r.map(r => r.w);
     r32.forEach(([a, b], i) => {
       koA.r32[i][a] = (koA.r32[i][a] || 0) + 1;
@@ -404,7 +464,7 @@ function runMC() {
       [r32w[0],r32w[1]],[r32w[2],r32w[3]],[r32w[4],r32w[5]],[r32w[6],r32w[7]],
       [r32w[8],r32w[9]],[r32w[10],r32w[11]],[r32w[12],r32w[13]],[r32w[14],r32w[15]],
     ];
-    const r16r = r16.map(([a, b]) => sg(a, b, true));
+    const r16r = r16.map(([a, b]) => koPlay(a, b));
     const r16w = r16r.map(r => r.w);
     r16.forEach(([a, b], i) => {
       koA.r16[i][a] = (koA.r16[i][a] || 0) + 1;
@@ -417,7 +477,7 @@ function runMC() {
     const qf = [
       [r16w[0],r16w[1]],[r16w[2],r16w[3]],[r16w[4],r16w[5]],[r16w[6],r16w[7]],
     ];
-    const qfr = qf.map(([a, b]) => sg(a, b, true));
+    const qfr = qf.map(([a, b]) => koPlay(a, b));
     const qfw = qfr.map(r => r.w);
     const qfl = qfr.map((r, i) => qf[i][r.w === qf[i][0] ? 1 : 0]);
     qf.forEach(([a, b], i) => {
@@ -429,7 +489,7 @@ function runMC() {
 
     // SF
     const sf = [[qfw[0],qfw[1]],[qfw[2],qfw[3]]];
-    const sfr = sf.map(([a, b]) => sg(a, b, true));
+    const sfr = sf.map(([a, b]) => koPlay(a, b));
     const sfw = sfr.map(r => r.w);
     const sfl = sfr.map((r, i) => sf[i][r.w === sf[i][0] ? 1 : 0]);
     sf.forEach(([a, b], i) => {
@@ -441,14 +501,14 @@ function runMC() {
 
     // 3rd place
     const tp = [sfl[0], sfl[1]];
-    const tpr = sg(tp[0], tp[1], true);
+    const tpr = koPlay(tp[0], tp[1]);
     koA.tp[0][tp[0]] = (koA.tp[0][tp[0]] || 0) + 1;
     koB.tp[0][tp[1]] = (koB.tp[0][tp[1]] || 0) + 1;
     koW.tp[0][tpr.w] = (koW.tp[0][tpr.w] || 0) + 1;
 
     // Final
     const fn = [sfw[0], sfw[1]];
-    const fnr = sg(fn[0], fn[1], true);
+    const fnr = koPlay(fn[0], fn[1]);
     koA.f[0][fn[0]] = (koA.f[0][fn[0]] || 0) + 1;
     koB.f[0][fn[1]] = (koB.f[0][fn[1]] || 0) + 1;
     koW.f[0][fnr.w] = (koW.f[0][fnr.w] || 0) + 1;
@@ -470,15 +530,25 @@ function runMC() {
     const fx = [];
     for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) {
       const [tA, tB] = [teams[i], teams[j]];
-      const ctx = {}; if (tA === 'Spain' || tB === 'Spain') ctx.spN = ++spN;
-      const pred = predScGroup(tA, tB, ctx);
-      const m = pred.m;
-      fx.push({
-        tA, tB, gA: pred.gA, gB: pred.gB, score: pred.score, xg: [m.xgA, m.xgB],
-        topFreq: +(pred.prob * 100).toFixed(0), top3: m.top3,
-        wA: +(m.pWinA * 100).toFixed(0), wB: +(m.pWinB * 100).toFixed(0),
-        dr: +(m.pDraw * 100).toFixed(0),
-      });
+      const act = actualGroup(tA, tB);
+      if (act) {
+        // Completed game — show the real result, not a projection.
+        const gA = act.gA, gB = act.gB;
+        fx.push({
+          tA, tB, gA, gB, score: `${gA}-${gB}`, actual: true,
+          wA: gA > gB ? 100 : 0, wB: gB > gA ? 100 : 0, dr: gA === gB ? 100 : 0,
+        });
+      } else {
+        const ctx = {}; if (tA === 'Spain' || tB === 'Spain') ctx.spN = ++spN;
+        const pred = predScGroup(tA, tB, ctx);
+        const m = pred.m;
+        fx.push({
+          tA, tB, gA: pred.gA, gB: pred.gB, score: pred.score, xg: [m.xgA, m.xgB],
+          topFreq: +(pred.prob * 100).toFixed(0), top3: m.top3,
+          wA: +(m.pWinA * 100).toFixed(0), wB: +(m.pWinB * 100).toFixed(0),
+          dr: +(m.pDraw * 100).toFixed(0),
+        });
+      }
       fi++;
     }
     groupGames[g] = fx;
@@ -549,10 +619,19 @@ function runMC() {
     return { pA: (sA[tA] || 0) / NSIMS, pB: (sB[tB] || 0) / NSIMS, altA: top4(sA), altB: top4(sB) };
   };
   const koGame = (rnd, idx, tA, tB) => {
+    const { pA, pB, altA, altB } = mcCtx(rnd, idx, tA, tB);
+    const act = actualKO(tA, tB);
+    if (act) {
+      // Completed knockout tie — lock in the real result and winner.
+      return {
+        tA, tB, winner: act.winner, winPA: act.winner === tA ? 1 : 0, winP: 1,
+        score: `${act.gA}-${act.gB}`, aet: act.aet, pens: act.pens, actual: true,
+        pA, pB, altA, altB,
+      };
+    }
     const aAdv = advProbA(tA, tB);
     const winner = aAdv >= 0.5 ? tA : tB;
     const ko = predScKO(tA, tB, winner);
-    const { pA, pB, altA, altB } = mcCtx(rnd, idx, tA, tB);
     return {
       tA, tB, winner, winPA: +aAdv.toFixed(2), winP: +Math.max(aAdv, 1 - aAdv).toFixed(2),
       score: ko.score, aet: ko.aet, pens: ko.pens, pA, pB, altA, altB,
@@ -580,7 +659,7 @@ function runMC() {
     }))
     .sort((a, b) => (b.w || 0) - (a.w || 0)).slice(0, 16);
 
-  return { groupGames, groupStandings, bracket, winProbs, reachProbs };
+  return { groupGames, groupStandings, bracket, winProbs, reachProbs, nResults: N_RESULTS() };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -659,11 +738,12 @@ export default function WC2026() {
 
     return (
       <div onClick={() => setExpanded(open ? null : key)}
-        style={{ ...sx.card, cursor: 'pointer', borderColor: open ? accent : border, marginBottom: 0, transition: 'border-color .15s' }}>
+        style={{ ...sx.card, cursor: 'pointer', borderColor: g.actual ? green : open ? accent : border, marginBottom: 0, transition: 'border-color .15s' }}>
         <div style={{ ...sx.label, marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{roundLabel} {isGroupGame ? `· Match ${idx + 1}` : `· #${idx + 1}`}</span>
-          {g.label && <span style={{ color: dimmer, fontSize: '0.55rem' }}>{g.label}</span>}
-          {g.xg && <span style={{ color: dimmer, fontSize: '0.58rem' }}>xG {g.xg[0]}–{g.xg[1]}</span>}
+          {g.actual && <span style={{ color: green, fontSize: '0.55rem', fontWeight: 700, letterSpacing: '0.12em' }}>✓ RESULT</span>}
+          {!g.actual && g.label && <span style={{ color: dimmer, fontSize: '0.55rem' }}>{g.label}</span>}
+          {!g.actual && g.xg && <span style={{ color: dimmer, fontSize: '0.58rem' }}>xG {g.xg[0]}–{g.xg[1]}</span>}
         </div>
 
         {/* Score row */}
@@ -671,20 +751,20 @@ export default function WC2026() {
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '1.5rem', lineHeight: 1 }}>{F(g.tA)}</div>
             <div style={{ fontSize: '0.72rem', color: advA ? '#fff' : silver, marginTop: '4px', lineHeight: 1.2 }}>{g.tA}</div>
-            <div style={{ fontSize: '0.58rem', color: advA ? gold : dim, marginTop: '3px' }}>{pctA}%</div>
+            <div style={{ fontSize: '0.58rem', color: advA ? (g.actual ? green : gold) : dim, marginTop: '3px' }}>{g.actual ? (advA ? 'W' : sA === sB ? 'D' : 'L') : `${pctA}%`}</div>
           </div>
           <div style={{ textAlign: 'center', padding: '0 4px' }}>
             <div style={{ fontSize: '2rem', fontWeight: 900, color: '#fff', letterSpacing: '0.1em', lineHeight: 1 }}>
               {sA}<span style={{ color: dim, fontSize: '1.4rem', margin: '0 2px' }}>–</span>{sB}
             </div>
-            <div style={{ fontSize: '0.52rem', color: g.aet ? '#E8B45A' : dimmer, letterSpacing: '0.12em', marginTop: '2px' }}>
-              {g.pens ? 'A.E.T.' : g.aet ? 'A.E.T.' : 'PREDICTED'}
+            <div style={{ fontSize: '0.52rem', color: g.actual ? green : g.aet ? '#E8B45A' : dimmer, letterSpacing: '0.12em', marginTop: '2px' }}>
+              {g.actual ? (g.pens ? 'PENALTIES' : g.aet ? 'A.E.T. · FINAL' : 'FINAL') : g.aet ? 'A.E.T.' : 'PREDICTED'}
             </div>
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '1.5rem', lineHeight: 1 }}>{F(g.tB)}</div>
             <div style={{ fontSize: '0.72rem', color: advB ? '#fff' : silver, marginTop: '4px', lineHeight: 1.2 }}>{g.tB}</div>
-            <div style={{ fontSize: '0.58rem', color: advB ? gold : dim, marginTop: '3px' }}>{pctB}%</div>
+            <div style={{ fontSize: '0.58rem', color: advB ? (g.actual ? green : gold) : dim, marginTop: '3px' }}>{g.actual ? (advB ? 'W' : sA === sB ? 'D' : 'L') : `${pctB}%`}</div>
           </div>
         </div>
 
@@ -1050,6 +1130,7 @@ export default function WC2026() {
           'Knockout: 90min → Extra time (33% xG) → Penalty shootout (skill-weighted, ±15% from base 50%)',
           'Team ratings calibrated from: FIFA rankings (Apr 2026) · BetMGM/FanDuel/DraftKings implied probs · Polymarket $1.5B trading volume · ESPN Power Rankings',
           'Expert consensus incorporated: Carragher (Telegraph) · CBS SportsLine · Flashscore analysts · Oddschecker',
+          `Live results conditioning: completed games are locked in as facts — group tables re-form around real scores and the bracket re-runs from the actual qualifiers, so only unplayed matches are still simulated. With no results entered the output is a pure pre-tournament projection`,
           `Scorelines: drawn from each match\u2019s xG-derived Poisson distribution (seeded per-matchup), conditioned on the predicted result — reproducing the real spread of 1-0s, 3-1s and the occasional 5-0, not a flattened average`,
           `Monte Carlo: ${NSIMS.toLocaleString()} tournament simulations × 104 games = ${(NSIMS * 104).toLocaleString()} outcomes`,
         ].map((line, i) => (
@@ -1096,6 +1177,12 @@ export default function WC2026() {
             <div style={{ color: dim, fontSize: '0.62rem', letterSpacing: '0.14em', marginTop: '4px' }}>
               {NSIMS.toLocaleString()} MONTE CARLO SIMULATIONS · POISSON xG MODEL · ALL 104 GAMES · FULL BRACKET
             </div>
+            {data.nResults > 0 && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginTop: '7px', background: 'rgba(52,211,153,0.12)', border: `1px solid ${green}`, borderRadius: '5px', padding: '3px 9px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: green, boxShadow: `0 0 6px ${green}` }} />
+                <span style={{ color: green, fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.1em' }}>LIVE · conditioned on {data.nResults} completed {data.nResults === 1 ? 'game' : 'games'}</span>
+              </div>
+            )}
           </div>
           <div style={{ textAlign: 'right', paddingBottom: '2px' }}>
             <div style={{ fontSize: '0.8rem', color: '#fff', fontWeight: 700 }}>{F(winner)} {winner} {winP}%</div>
