@@ -148,28 +148,37 @@ function getAD(team, ctx = {}) {
 //    only needed when a tie is settled on penalties / can't be inferred)
 //
 // Examples (commented out — fill in once the tournament kicks off):
-const RESULTS = {
+// Optional code-level seed. You can pre-fill results here, but the normal
+// way to enter scores is now the "Results" tab in the app — those are saved
+// in your browser (on a deployed site) and merged over this seed on load.
+//
+//  • Group games: "TeamA|TeamB": [goalsA, goalsB]  (either team order works)
+//  • Knockout games: { a, b, ga, gb, pens?, win? }  (win names the advancer)
+const SEED_RESULTS = {
   group: {
     // 'Brazil|Scotland': [2, 0],
-    // 'Spain|Uruguay':   [1, 1],
   },
   ko: [
     // { a: 'France', b: 'Senegal', ga: 2, gb: 0 },
-    // { a: 'Spain', b: 'Germany', ga: 1, gb: 1, pens: '4-2', win: 'Spain' },
   ],
 };
 
+// LIVE holds the results the engine currently conditions on. The component
+// sets this from app state (seed + UI entries) immediately before each
+// simulation run, so actualGroup / actualKO always read the latest scores.
+let LIVE = { group: { ...SEED_RESULTS.group }, ko: [...SEED_RESULTS.ko] };
+
 // Completed group result for a pair, oriented to the (tA, tB) call order.
 function actualGroup(tA, tB) {
-  const r = RESULTS.group[`${tA}|${tB}`];
+  const r = LIVE.group[`${tA}|${tB}`];
   if (r) return { gA: r[0], gB: r[1] };
-  const r2 = RESULTS.group[`${tB}|${tA}`];
+  const r2 = LIVE.group[`${tB}|${tA}`];
   if (r2) return { gA: r2[1], gB: r2[0] };
   return null;
 }
 // Completed knockout result for a pair, oriented to the (tA, tB) call order.
 function actualKO(tA, tB) {
-  for (const m of RESULTS.ko) {
+  for (const m of LIVE.ko) {
     let gA, gB;
     if (m.a === tA && m.b === tB) { gA = m.ga; gB = m.gb; }
     else if (m.a === tB && m.b === tA) { gA = m.gb; gB = m.ga; }
@@ -184,7 +193,31 @@ function actualKO(tA, tB) {
   }
   return null;
 }
-const N_RESULTS = () => Object.keys(RESULTS.group).length + RESULTS.ko.length;
+const N_RESULTS = () => Object.keys(LIVE.group).length + LIVE.ko.length;
+
+// ── RESULTS PERSISTENCE (guarded) ─────────────────────────────────
+// On a deployed site this persists entries across reloads via localStorage.
+// In sandboxed previews localStorage may be unavailable, so every access is
+// wrapped — it silently degrades to in-memory (session-only) and never throws.
+const LS_KEY = 'wc2026_live_results';
+function loadResults() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const r = JSON.parse(raw);
+      if (r && r.group && Array.isArray(r.ko)) return r;
+    }
+  } catch (e) { /* sandboxed / disabled — fall through */ }
+  return { group: { ...SEED_RESULTS.group }, ko: [...SEED_RESULTS.ko] };
+}
+function saveResults(r) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(r)); } catch (e) { /* no-op */ }
+}
+const clampGoal = v => {
+  const n = parseInt(v, 10);
+  if (isNaN(n)) return null;
+  return Math.max(0, Math.min(20, n));
+};
 
 function sg(tA, tB, ko = false, ctx = {}) {
   const { a: aA, d: dA } = getAD(tA, ctx);
@@ -675,11 +708,57 @@ export default function WC2026() {
   const [grp, setGrp] = useState('A');
   const [rnd, setRnd] = useState('r32');
   const [expanded, setExpanded] = useState(null);
+  const [results, setResults] = useState(loadResults);
+  const [computing, setComputing] = useState(false);
 
+  // Re-condition and re-simulate whenever results change (and on mount).
+  // Pushing results into LIVE just before runMC keeps the engine in sync.
+  // The cleanup-cancel naturally debounces rapid score entries.
   useEffect(() => {
-    const t = setTimeout(() => setData(runMC()), 60);
+    LIVE = results;
+    saveResults(results);
+    setComputing(true);
+    const t = setTimeout(() => { setData(runMC()); setComputing(false); }, 80);
     return () => clearTimeout(t);
-  }, []);
+  }, [results]);
+
+  // ── Score-entry handlers ──
+  const setGroupScore = (tA, tB, aStr, bStr) => {
+    setResults(prev => {
+      const group = { ...prev.group };
+      delete group[`${tA}|${tB}`]; delete group[`${tB}|${tA}`];
+      const a = clampGoal(aStr), b = clampGoal(bStr);
+      if (a != null && b != null) group[`${tA}|${tB}`] = [a, b];
+      return { ...prev, group };
+    });
+  };
+  const setKOScore = (tA, tB, aStr, bStr, penWin) => {
+    setResults(prev => {
+      const ko = prev.ko.filter(m => !((m.a === tA && m.b === tB) || (m.a === tB && m.b === tA)));
+      const a = clampGoal(aStr), b = clampGoal(bStr);
+      if (a != null && b != null) {
+        const entry = { a: tA, b: tB, ga: a, gb: b };
+        if (a === b) entry.win = penWin || tA;   // a draw needs a shootout winner
+        ko.push(entry);
+      }
+      return { ...prev, ko };
+    });
+  };
+  const clearAllResults = () => setResults({ group: {}, ko: [] });
+
+  // Current stored value for an input pair (group), oriented to (tA,tB).
+  const groupVal = (tA, tB) => {
+    const r = results.group[`${tA}|${tB}`];
+    if (r) return [r[0], r[1]];
+    const r2 = results.group[`${tB}|${tA}`];
+    if (r2) return [r2[1], r2[0]];
+    return ['', ''];
+  };
+  const koVal = (tA, tB) => {
+    const m = results.ko.find(m => (m.a === tA && m.b === tB) || (m.a === tB && m.b === tA));
+    if (!m) return ['', '', null];
+    return m.a === tA ? [m.ga, m.gb, m.win] : [m.gb, m.ga, m.win];
+  };
 
   if (!data) return (
     <div style={{ minHeight: '100vh', background: 'radial-gradient(900px 460px at 50% 30%, #243667 0%, rgba(36,54,103,0) 65%), linear-gradient(168deg,#131C42,#0B1029)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace' }}>
@@ -1143,6 +1222,118 @@ export default function WC2026() {
     </div>
   );
 
+  // ── ENTER RESULTS TAB ──
+  // Rows are built by a plain function returning host elements (not a nested
+  // component) so the score <input>s keep focus across the recompute re-render.
+  const renderEnter = () => {
+    const groupFix = {};
+    Object.keys(GS).forEach(g => {
+      const t = GS[g]; const fx = [];
+      for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) fx.push([t[i], t[j]]);
+      groupFix[g] = fx;
+    });
+    const koRounds = [
+      ['Round of 32', data.bracket.r32], ['Round of 16', data.bracket.r16],
+      ['Quarter-Finals', data.bracket.qf], ['Semi-Finals', data.bracket.sf],
+      ['Final', [data.bracket.final]], ['3rd Place', [data.bracket.tp]],
+    ];
+    const inStyle = {
+      width: '34px', textAlign: 'center', fontFamily: font, fontSize: '0.95rem', fontWeight: 700,
+      background: '#0C1330', color: '#fff', border: `1px solid ${border}`, borderRadius: '5px',
+      padding: '5px 0', outline: 'none',
+    };
+    const clean = v => v.replace(/[^0-9]/g, '').slice(0, 2);
+
+    const row = (k, tA, tB, val, opts = {}) => {
+      const { koMode, winSel, onScore, onWin } = opts;
+      const [a, b] = val;
+      const level = a !== '' && b !== '' && Number(a) === Number(b);
+      return (
+        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 0', borderBottom: `1px solid #101A3A` }}>
+          <div style={{ flex: 1, textAlign: 'right', fontSize: '0.78rem', color: silver, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+            {tA} <span style={{ fontSize: '0.95rem' }}>{F(tA)}</span>
+          </div>
+          <input type="text" inputMode="numeric" value={a === '' ? '' : String(a)} placeholder="–"
+            style={inStyle} onChange={e => onScore(clean(e.target.value), b)} />
+          <span style={{ color: dimmer, fontSize: '0.7rem' }}>–</span>
+          <input type="text" inputMode="numeric" value={b === '' ? '' : String(b)} placeholder="–"
+            style={inStyle} onChange={e => onScore(a, clean(e.target.value))} />
+          <div style={{ flex: 1, textAlign: 'left', fontSize: '0.78rem', color: silver, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+            <span style={{ fontSize: '0.95rem' }}>{F(tB)}</span> {tB}
+          </div>
+          {koMode && level && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: '4px' }}>
+              <span style={{ fontSize: '0.55rem', color: dimmer, letterSpacing: '0.08em' }}>PENS</span>
+              {[tA, tB].map(t => (
+                <button key={t} onClick={() => onWin(t)} style={{
+                  background: winSel === t ? gold : 'none', color: winSel === t ? '#000' : dim,
+                  border: `1px solid ${winSel === t ? gold : border}`, borderRadius: '4px',
+                  fontSize: '0.62rem', fontWeight: 700, padding: '3px 6px', cursor: 'pointer', fontFamily: font,
+                }}>{F(t)}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div>
+        <div style={{ ...sx.card, marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+          <div>
+            <div style={{ ...sx.label, marginBottom: '4px', color: data.nResults > 0 ? green : dim }}>
+              {data.nResults > 0 ? `● Conditioning on ${data.nResults} completed ${data.nResults === 1 ? 'game' : 'games'}` : '○ No results entered — pure projection'}
+            </div>
+            <div style={{ fontSize: '0.66rem', color: dimmer, lineHeight: 1.6 }}>
+              Type a score for any completed match. The forecast locks it in and re-simulates everything still to play.
+              {computing && <span style={{ color: amber, marginLeft: '6px' }}>updating…</span>}
+            </div>
+          </div>
+          {data.nResults > 0 && (
+            <button onClick={clearAllResults} style={{
+              background: 'none', border: `1px solid ${red}`, color: red, borderRadius: '6px',
+              padding: '6px 12px', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: font, letterSpacing: '0.05em',
+            }}>CLEAR ALL</button>
+          )}
+        </div>
+
+        {/* Group stage entry */}
+        <div style={{ ...sx.label, marginBottom: '10px' }}>Group stage · 72 fixtures</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: '10px', marginBottom: '20px' }}>
+          {Object.keys(GS).map(g => (
+            <div key={g} style={sx.card}>
+              <div style={{ ...sx.label, marginBottom: '6px', color: gold }}>Group {g}</div>
+              {groupFix[g].map(([tA, tB], i) => row(`${g}-${i}`, tA, tB, groupVal(tA, tB), {
+                onScore: (a, b) => setGroupScore(tA, tB, a, b),
+              }))}
+            </div>
+          ))}
+        </div>
+
+        {/* Knockout entry */}
+        <div style={{ ...sx.label, marginBottom: '4px' }}>Knockouts · matchups follow the results you enter</div>
+        <div style={{ fontSize: '0.62rem', color: dimmer, marginBottom: '10px', lineHeight: 1.6 }}>
+          Ties shown are the model's current bracket — they firm up into the real matchups as group results go in. Enter each round as it's played; a level score reveals a penalty-winner toggle.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: '10px' }}>
+          {koRounds.map(([label, games]) => (
+            <div key={label} style={sx.card}>
+              <div style={{ ...sx.label, marginBottom: '6px', color: gold }}>{label}</div>
+              {games.map((gm, i) => {
+                const [a, b, win] = koVal(gm.tA, gm.tB);
+                return row(`${label}-${i}`, gm.tA, gm.tB, [a, b], {
+                  koMode: true, winSel: win,
+                  onScore: (na, nb) => setKOScore(gm.tA, gm.tB, na, nb, win),
+                  onWin: w => setKOScore(gm.tA, gm.tB, a, b, w),
+                });
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   // ── MAIN RENDER ──
   return (
     <div style={sx.app}>
@@ -1192,7 +1383,7 @@ export default function WC2026() {
 
         {/* Tab bar */}
         <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, gap: 0, overflowX: 'auto' }}>
-          {[['prediction','🏆 Prediction'],['groups','⚽ Group Stage'],['bracket','🏅 Bracket'],['stats','📊 Statistics']].map(([id, label]) => (
+          {[['prediction','🏆 Prediction'],['groups','⚽ Group Stage'],['bracket','🏅 Bracket'],['stats','📊 Statistics'],['enter','📝 Results']].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} className={`wc-tab${tab === id ? ' on' : ''}`} style={{
               ...sx.tab,
               color: tab === id ? gold : dim,
@@ -1210,6 +1401,7 @@ export default function WC2026() {
         {tab === 'groups' && renderGroups()}
         {tab === 'bracket' && renderBracket()}
         {tab === 'stats' && renderStats()}
+        {tab === 'enter' && renderEnter()}
       </div>
 
       <div style={{ padding: '12px 20px', borderTop: `1px solid ${dimmer}`, fontSize: '0.58rem', color: dimmer, textAlign: 'center' }}>
