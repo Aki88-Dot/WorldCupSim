@@ -100,7 +100,7 @@ function pois(λ) {
 // thin team losing a talisman is hit hard while a deep squad shrugs off a
 // fringe absence. Tournament-wide status (no per-stage timeline) for now.
 const ABSENCE = { out: 1, doubt: 0.5, fit: 0 };
-const PLAYERS = {
+const SEED_PLAYERS = {
   'Spain':     [{ n: 'Lamine Yamal', w: 0.15, side: 'att', status: 'doubt' }],   // hamstring, expected back but eased in
   'Brazil':    [{ n: 'Neymar', w: 0.10, side: 'att', status: 'doubt' }],          // ongoing fitness doubts
   'Germany':   [{ n: 'Serge Gnabry', w: 0.10, side: 'att', status: 'out' },       // thigh, out
@@ -119,10 +119,15 @@ const PLAYERS = {
   'Algeria':   [{ n: 'Luca Zidane', w: 0.05, side: 'def', status: 'doubt' }],     // GK, facial injury
 };
 
+// LIVE_INJ holds the availability table the engine currently uses. The
+// component sets it from app state (seed + UI edits) before each simulation,
+// so getAD always reflects the latest injuries/doubts entered in the UI.
+let LIVE_INJ = JSON.parse(JSON.stringify(SEED_PLAYERS));
+
 function getAD(team, ctx = {}) {
   let a = T[team].a, d = T[team].d;
   if (T[team].host) { a *= 1.09; d *= 1.07; }
-  const roster = PLAYERS[team];
+  const roster = LIVE_INJ[team];
   if (roster) {
     let pa = 0, pd = 0;
     for (const p of roster) {
@@ -218,6 +223,25 @@ const clampGoal = v => {
   if (isNaN(n)) return null;
   return Math.max(0, Math.min(20, n));
 };
+
+// ── INJURY PERSISTENCE (guarded) ──────────────────────────────────
+// Same approach as results: persists across reloads on a deployed site,
+// degrades to in-memory in sandboxed previews, and never throws.
+const LS_INJ = 'wc2026_injuries';
+const cloneInj = o => JSON.parse(JSON.stringify(o));
+function loadInjuries() {
+  try {
+    const raw = localStorage.getItem(LS_INJ);
+    if (raw) { const o = JSON.parse(raw); if (o && typeof o === 'object' && !Array.isArray(o)) return o; }
+  } catch (e) { /* sandboxed / disabled */ }
+  return cloneInj(SEED_PLAYERS);
+}
+function saveInjuries(o) {
+  try { localStorage.setItem(LS_INJ, JSON.stringify(o)); } catch (e) { /* no-op */ }
+}
+// Importance presets shown when adding a new injury (share of a side's rating).
+const IMP_PRESETS = [['Star', 0.15], ['Key', 0.08], ['Squad', 0.03]];
+const impLabel = w => (w >= 0.12 ? 'Star' : w >= 0.06 ? 'Key' : 'Squad');
 
 function sg(tA, tB, ko = false, ctx = {}) {
   const { a: aA, d: dA } = getAD(tA, ctx);
@@ -709,18 +733,22 @@ export default function WC2026() {
   const [rnd, setRnd] = useState('r32');
   const [expanded, setExpanded] = useState(null);
   const [results, setResults] = useState(loadResults);
+  const [injuries, setInjuries] = useState(loadInjuries);
+  const [injDraft, setInjDraft] = useState({ team: '', n: '', side: 'att', w: 0.08, status: 'out' });
   const [computing, setComputing] = useState(false);
 
-  // Re-condition and re-simulate whenever results change (and on mount).
-  // Pushing results into LIVE just before runMC keeps the engine in sync.
-  // The cleanup-cancel naturally debounces rapid score entries.
+  // Re-condition and re-simulate whenever results OR injuries change (and on
+  // mount). Pushing both into LIVE / LIVE_INJ just before runMC keeps the
+  // engine in sync. The cleanup-cancel naturally debounces rapid edits.
   useEffect(() => {
     LIVE = results;
+    LIVE_INJ = injuries;
     saveResults(results);
+    saveInjuries(injuries);
     setComputing(true);
     const t = setTimeout(() => { setData(runMC()); setComputing(false); }, 80);
     return () => clearTimeout(t);
-  }, [results]);
+  }, [results, injuries]);
 
   // ── Score-entry handlers ──
   const setGroupScore = (tA, tB, aStr, bStr) => {
@@ -745,6 +773,24 @@ export default function WC2026() {
     });
   };
   const clearAllResults = () => setResults({ group: {}, ko: [] });
+
+  // ── Injury-entry handlers ──
+  const setInjStatus = (team, idx, status) => setInjuries(prev => ({
+    ...prev, [team]: prev[team].map((p, i) => (i === idx ? { ...p, status } : p)),
+  }));
+  const removeInjury = (team, idx) => setInjuries(prev => {
+    const arr = prev[team].filter((_, i) => i !== idx);
+    const next = { ...prev };
+    if (arr.length) next[team] = arr; else delete next[team];
+    return next;
+  });
+  const addInjury = () => {
+    const { team, n, side, w, status } = injDraft;
+    if (!team || !n.trim()) return;
+    setInjuries(prev => ({ ...prev, [team]: [...(prev[team] || []), { n: n.trim(), w, side, status }] }));
+    setInjDraft({ team: '', n: '', side: 'att', w: 0.08, status: 'out' });
+  };
+  const resetInjuries = () => setInjuries(cloneInj(SEED_PLAYERS));
 
   // Current stored value for an input pair (group), oriented to (tA,tB).
   const groupVal = (tA, tB) => {
@@ -1204,7 +1250,7 @@ export default function WC2026() {
         <div style={{ ...sx.label, color: dim, marginBottom: '8px' }}>Methodology & sources</div>
         {[
           `Dixon-Coles Poisson model: xG(A vs B) = att_A ÷ def_B × μ  where μ=${MU} (calibrated to 2022 WC 2.69/game + 2026 qualifiers 2.8–3.3/game)`,
-          'Player-availability layer: key absences/doubts (Yamal, Mitoma, Gnabry, Romero, Davies, ter Stegen, Grealish …) cut a team\u2019s attack or defence by each player\u2019s weighted share — capped at \u221220% per side. Sourced from June 2026 reporting (ESPN, Sports Mole, SI, Yahoo)',
+          'Player-availability layer: key absences/doubts (Yamal, Mitoma, Gnabry, Romero, Davies, ter Stegen, Grealish …) cut a team\u2019s attack or defence by each player\u2019s weighted share — capped at \u221220% per side. Sourced from June 2026 reporting (ESPN, Sports Mole, SI, Yahoo) and editable live in the Injuries tab as fitness news breaks',
           'Host advantage: Mexico/USA/Canada att×1.09 · def×1.07',
           'Knockout: 90min → Extra time (33% xG) → Penalty shootout (skill-weighted, ±15% from base 50%)',
           'Team ratings calibrated from: FIFA rankings (Apr 2026) · BetMGM/FanDuel/DraftKings implied probs · Polymarket $1.5B trading volume · ESPN Power Rankings',
@@ -1221,6 +1267,124 @@ export default function WC2026() {
       </div>
     </div>
   );
+
+  // ── INJURIES / AVAILABILITY TAB ──
+  // Like the results tab, rows are plain host elements (no nested component)
+  // so the "add injury" name field keeps focus while typing.
+  const renderInjuries = () => {
+    const teams = Object.keys(T).sort();
+    const flagged = Object.keys(injuries).filter(t => injuries[t] && injuries[t].length).sort();
+    const activeCount = Object.values(injuries).flat().filter(p => p.status === 'out' || p.status === 'doubt').length;
+
+    const STATUSES = [['fit', 'Fit', green], ['doubt', 'Doubt', amber], ['out', 'Out', red]];
+    const pill = (active, color, label, onClick, key) => (
+      <button key={key} onClick={onClick} style={{
+        background: active ? color : 'none', color: active ? '#08122B' : dim,
+        border: `1px solid ${active ? color : border}`, borderRadius: '5px',
+        fontSize: '0.6rem', fontWeight: 700, padding: '4px 8px', cursor: 'pointer',
+        fontFamily: font, letterSpacing: '0.04em',
+      }}>{label}</button>
+    );
+
+    return (
+      <div>
+        {/* Status + reset */}
+        <div style={{ ...sx.card, marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+          <div>
+            <div style={{ ...sx.label, marginBottom: '4px', color: activeCount > 0 ? amber : dim }}>
+              {activeCount > 0 ? `● ${activeCount} active ${activeCount === 1 ? 'absence/doubt' : 'absences & doubts'} affecting ratings` : '○ No active absences'}
+            </div>
+            <div style={{ fontSize: '0.66rem', color: dimmer, lineHeight: 1.6 }}>
+              Set a player Out, Doubtful, or Fit as news breaks. Out removes their full weighted share of the team's attack or defence; Doubt removes half; Fit restores it. Each side is capped at −20%.
+              {computing && <span style={{ color: amber, marginLeft: '6px' }}>updating…</span>}
+            </div>
+          </div>
+          <button onClick={resetInjuries} style={{
+            background: 'none', border: `1px solid ${dimmer}`, color: dim, borderRadius: '6px',
+            padding: '6px 12px', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: font, letterSpacing: '0.05em',
+          }}>RESET TO DEFAULTS</button>
+        </div>
+
+        {/* Add a new injury */}
+        <div style={{ ...sx.card, marginBottom: '18px' }}>
+          <div style={{ ...sx.label, marginBottom: '10px', color: gold }}>Add an injury / absence</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
+            <div>
+              <div style={{ fontSize: '0.55rem', color: dimmer, marginBottom: '3px', letterSpacing: '0.1em' }}>TEAM</div>
+              <select value={injDraft.team} onChange={e => setInjDraft({ ...injDraft, team: e.target.value })}
+                style={{ background: '#0C1330', color: '#fff', border: `1px solid ${border}`, borderRadius: '5px', padding: '6px 8px', fontFamily: font, fontSize: '0.72rem', outline: 'none' }}>
+                <option value="">Select…</option>
+                {teams.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1, minWidth: '140px' }}>
+              <div style={{ fontSize: '0.55rem', color: dimmer, marginBottom: '3px', letterSpacing: '0.1em' }}>PLAYER</div>
+              <input type="text" value={injDraft.n} placeholder="Player name"
+                onChange={e => setInjDraft({ ...injDraft, n: e.target.value })}
+                style={{ width: '100%', background: '#0C1330', color: '#fff', border: `1px solid ${border}`, borderRadius: '5px', padding: '6px 8px', fontFamily: font, fontSize: '0.72rem', outline: 'none' }} />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.55rem', color: dimmer, marginBottom: '3px', letterSpacing: '0.1em' }}>AFFECTS</div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {pill(injDraft.side === 'att', accent, 'Attack', () => setInjDraft({ ...injDraft, side: 'att' }), 'att')}
+                {pill(injDraft.side === 'def', accent, 'Defence', () => setInjDraft({ ...injDraft, side: 'def' }), 'def')}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.55rem', color: dimmer, marginBottom: '3px', letterSpacing: '0.1em' }}>IMPORTANCE</div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {IMP_PRESETS.map(([lab, w]) => pill(Math.abs(injDraft.w - w) < 0.001, gold, lab, () => setInjDraft({ ...injDraft, w }), lab))}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.55rem', color: dimmer, marginBottom: '3px', letterSpacing: '0.1em' }}>STATUS</div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {pill(injDraft.status === 'out', red, 'Out', () => setInjDraft({ ...injDraft, status: 'out' }), 'o')}
+                {pill(injDraft.status === 'doubt', amber, 'Doubt', () => setInjDraft({ ...injDraft, status: 'doubt' }), 'd')}
+              </div>
+            </div>
+            <button onClick={addInjury} disabled={!injDraft.team || !injDraft.n.trim()} style={{
+              background: (!injDraft.team || !injDraft.n.trim()) ? '#1B294C' : gold,
+              color: (!injDraft.team || !injDraft.n.trim()) ? dimmer : '#08122B',
+              border: 'none', borderRadius: '6px', padding: '8px 16px', fontSize: '0.7rem', fontWeight: 800,
+              cursor: (!injDraft.team || !injDraft.n.trim()) ? 'default' : 'pointer', fontFamily: font, letterSpacing: '0.05em',
+            }}>+ ADD</button>
+          </div>
+        </div>
+
+        {/* Current injuries by team */}
+        <div style={{ ...sx.label, marginBottom: '10px' }}>Current list · {flagged.length} {flagged.length === 1 ? 'team' : 'teams'}</div>
+        {flagged.length === 0 && (
+          <div style={{ ...sx.card, color: dim, fontSize: '0.72rem' }}>No injuries recorded — every squad at full strength. Add one above, or hit “Reset to defaults” to restore the researched June-2026 list.</div>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: '10px' }}>
+          {flagged.map(team => (
+            <div key={team} style={sx.card}>
+              <div style={{ ...sx.label, marginBottom: '8px', color: gold, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '1rem' }}>{F(team)}</span> {team}
+              </div>
+              {injuries[team].map((p, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 0', borderBottom: `1px solid #101A3A` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.76rem', color: silver, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{p.n}</div>
+                    <div style={{ fontSize: '0.55rem', color: dimmer, letterSpacing: '0.06em', marginTop: '1px' }}>
+                      {p.side === 'def' ? 'DEFENCE' : 'ATTACK'} · {impLabel(p.w)} · −{Math.round(p.w * 100)}% if out
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {STATUSES.map(([st, lab, col]) => pill(p.status === st, col, lab, () => setInjStatus(team, i, st), st))}
+                  </div>
+                  <button onClick={() => removeInjury(team, i)} title="Remove" style={{
+                    background: 'none', border: 'none', color: dimmer, cursor: 'pointer', fontSize: '1rem', fontFamily: font, padding: '0 2px', lineHeight: 1,
+                  }}>×</button>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   // ── ENTER RESULTS TAB ──
   // Rows are built by a plain function returning host elements (not a nested
@@ -1383,7 +1547,7 @@ export default function WC2026() {
 
         {/* Tab bar */}
         <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, gap: 0, overflowX: 'auto' }}>
-          {[['prediction','🏆 Prediction'],['groups','⚽ Group Stage'],['bracket','🏅 Bracket'],['stats','📊 Statistics'],['enter','📝 Results']].map(([id, label]) => (
+          {[['prediction','🏆 Prediction'],['groups','⚽ Group Stage'],['bracket','🏅 Bracket'],['stats','📊 Statistics'],['enter','📝 Results'],['injuries','🩹 Injuries']].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} className={`wc-tab${tab === id ? ' on' : ''}`} style={{
               ...sx.tab,
               color: tab === id ? gold : dim,
@@ -1402,6 +1566,7 @@ export default function WC2026() {
         {tab === 'bracket' && renderBracket()}
         {tab === 'stats' && renderStats()}
         {tab === 'enter' && renderEnter()}
+        {tab === 'injuries' && renderInjuries()}
       </div>
 
       <div style={{ padding: '12px 20px', borderTop: `1px solid ${dimmer}`, fontSize: '0.58rem', color: dimmer, textAlign: 'center' }}>
