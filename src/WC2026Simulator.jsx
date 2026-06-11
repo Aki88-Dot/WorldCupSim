@@ -82,6 +82,30 @@ const T = {
   'Curaçao':       {a:0.75,d:0.80,f:'🇨🇼',c:'#003DA5'},
 };
 
+// FIFA Men's World Ranking (Apr 1 2026 snapshot, via ESPN/Wikipedia) for all
+// 48 finalists. Used ONLY as the final tiebreaker when teams are level on
+// points, goal difference, and goals scored — the official best-thirds order.
+const FIFA_RANK = {
+  France: 1, Spain: 2, Argentina: 3, England: 4, Portugal: 5, Brazil: 6,
+  Netherlands: 7, Morocco: 8, Belgium: 9, Germany: 10, Croatia: 11, Colombia: 13,
+  Senegal: 14, Mexico: 15, USA: 16, Uruguay: 17, Japan: 18, Switzerland: 19,
+  Iran: 21, 'Türkiye': 22, Ecuador: 23, Austria: 24, 'South Korea': 25,
+  Australia: 27, Algeria: 28, Egypt: 29, Canada: 30, Norway: 31, Panama: 33,
+  "Côte d'Ivoire": 34, Sweden: 38, Paraguay: 40, Czechia: 41, Scotland: 43,
+  Tunisia: 44, 'DR Congo': 46, Uzbekistan: 50, Qatar: 55, Iraq: 57,
+  'South Africa': 60, 'Saudi Arabia': 61, Jordan: 63, 'Bosnia-Herz.': 65,
+  'Cape Verde': 69, Ghana: 74, 'Curaçao': 82, Haiti: 83, 'New Zealand': 85,
+};
+
+// Official ranking order: points → goal difference → goals scored → FIFA rank
+// (lower rank number is better, so it sorts ascending). Shared by group tables
+// and the best-third comparison so the whole qualification path is consistent.
+const byStanding = (a, b) =>
+  b.pts - a.pts ||
+  b.gd - a.gd ||
+  b.gf - a.gf ||
+  (FIFA_RANK[a.t] || 999) - (FIFA_RANK[b.t] || 999);
+
 // ── SIMULATION UTILITIES ──────────────────────────────────────────
 
 function pois(λ) {
@@ -440,15 +464,84 @@ function simGrp(g) {
   });
   const standings = teams
     .map(t => ({ t, pts: pts[t], gd: gd[t], gf: gf[t] }))
-    .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
+    .sort(byStanding);
   return { standings, scores, fx };
 }
 
-function get3rds(allGR) {
-  return Object.entries(allGR)
-    .map(([g, r]) => ({ ...r.standings[2], g }))
-    .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf)
-    .slice(0, 8).map(x => x.t);
+// ── OFFICIAL R32 BRACKET TOPOLOGY (FIFA 2026, matches 73–100) ──────
+// Each R32 slot lists its two feeders. 'win'/'run' = that group's winner /
+// runner-up; 'third' = a best-third whose group lies in the allowed set
+// (FIFA Annex C). Source: FIFA / USA TODAY official match list. Note that
+// group winners never meet other winners in the R32.
+const R32_SLOTS = [
+  { a: ['run', 'A'], b: ['run', 'B'] },                          // M73
+  { a: ['win', 'E'], b: ['third', ['A','B','C','D','F']] },      // M74
+  { a: ['win', 'F'], b: ['run', 'C'] },                          // M75
+  { a: ['win', 'C'], b: ['run', 'F'] },                          // M76
+  { a: ['win', 'I'], b: ['third', ['C','D','F','G','H']] },      // M77
+  { a: ['run', 'E'], b: ['run', 'I'] },                          // M78
+  { a: ['win', 'A'], b: ['third', ['C','E','F','H','I']] },      // M79
+  { a: ['win', 'L'], b: ['third', ['E','H','I','J','K']] },      // M80
+  { a: ['win', 'D'], b: ['third', ['B','E','F','I','J']] },      // M81
+  { a: ['win', 'G'], b: ['third', ['A','E','H','I','J']] },      // M82
+  { a: ['run', 'K'], b: ['run', 'L'] },                          // M83
+  { a: ['win', 'H'], b: ['run', 'J'] },                          // M84
+  { a: ['win', 'B'], b: ['third', ['E','F','G','I','J']] },      // M85
+  { a: ['win', 'J'], b: ['run', 'H'] },                          // M86
+  { a: ['win', 'K'], b: ['third', ['D','E','I','J','L']] },      // M87
+  { a: ['run', 'D'], b: ['run', 'G'] },                          // M88
+];
+// Feeder topology for later rounds, as indices into the previous round's
+// match array (matches 89–100). R16[i] = winners of R32[x],R32[y], etc.
+const R16_FEED = [[1,4],[0,2],[3,5],[6,7],[10,11],[8,9],[13,15],[12,14]]; // M89–M96 ← R32 idx
+const QF_FEED  = [[0,1],[4,5],[2,3],[6,7]];                              // M97–M100 ← R16 idx
+const SF_FEED  = [[0,1],[2,3]];                                         // SF ← QF idx
+// The 8 R32 slots that take a best-third, with their allowed group sets.
+const THIRD_SLOTS = R32_SLOTS
+  .map((s, i) => ({ i, from: s.b[0] === 'third' ? s.b[1] : null }))
+  .filter(s => s.from);
+
+// FIFA Annex C: assign each qualifying third-place GROUP to a third-slot,
+// respecting the allowed sets, as a deterministic bipartite perfect matching
+// (valid for every one of the 495 possible 8-of-12 combinations).
+function assignThirds(thirdGroups) {
+  const order = [...thirdGroups].sort();   // set-deterministic ordering
+  const assign = {}; const used = new Set();
+  const bt = k => {
+    if (k === THIRD_SLOTS.length) return true;
+    const slot = THIRD_SLOTS[k];
+    for (const g of order) {
+      if (used.has(g) || !slot.from.includes(g)) continue;
+      used.add(g); assign[slot.i] = g;
+      if (bt(k + 1)) return true;
+      used.delete(g); delete assign[slot.i];
+    }
+    return false;
+  };
+  bt(0);
+  return assign;   // R32 slot index -> group letter
+}
+
+// Best 8 third-place teams → ranked groups + team-by-group, using the four
+// official tiebreakers (byStanding: points → GD → goals → FIFA rank).
+function best3rds(thirdRowByGroup) {
+  const ranked = Object.keys(thirdRowByGroup)
+    .map(g => ({ g, ...thirdRowByGroup[g] }))
+    .sort(byStanding).slice(0, 8);
+  const teamByGroup = {}; ranked.forEach(x => { teamByGroup[x.g] = x.t; });
+  return { groups: ranked.map(x => x.g), teamByGroup };
+}
+
+// Build the 16 R32 team pairs from winners/runners-up (q) and the best thirds.
+function buildR32(q, thirds) {
+  const assign = assignThirds(thirds.groups);
+  const teamFor = (side, slotIdx) => {
+    const [kind, arg] = side;
+    if (kind === 'win') return q[arg].p1;
+    if (kind === 'run') return q[arg].p2;
+    return thirds.teamByGroup[assign[slotIdx]];   // 'third'
+  };
+  return R32_SLOTS.map((s, i) => [teamFor(s.a, i), teamFor(s.b, i)]);
 }
 
 // ── MONTE CARLO ENGINE ─────────────────────────────────────────────
@@ -498,15 +591,11 @@ function runMC() {
     // Qualifiers
     const q = {};
     for (const [g, r] of Object.entries(gr)) q[g] = { p1: r.standings[0].t, p2: r.standings[1].t };
-    const th = get3rds(gr);
+    const thirdRow = {}; for (const [g, r] of Object.entries(gr)) thirdRow[g] = r.standings[2];
+    const thirds = best3rds(thirdRow);
 
-    // R32
-    const r32 = [
-      [q.A.p1,q.B.p2],[q.B.p1,q.A.p2],[q.C.p1,q.D.p2],[q.D.p1,q.C.p2],
-      [q.E.p1,q.F.p2],[q.F.p1,q.E.p2],[q.G.p1,q.H.p2],[q.H.p1,q.G.p2],
-      [q.I.p1,q.J.p2],[q.J.p1,q.I.p2],[q.K.p1,q.L.p2],[q.L.p1,q.K.p2],
-      [th[0],th[1]],[th[2],th[3]],[th[4],th[5]],[th[6],th[7]],
-    ];
+    // R32 — official slot topology + Annex C third-place assignment
+    const r32 = buildR32(q, thirds);
     const r32r = r32.map(([a, b]) => koPlay(a, b));
     const r32w = r32r.map(r => r.w);
     r32.forEach(([a, b], i) => {
@@ -516,11 +605,8 @@ function runMC() {
       rf[a].r32++; rf[b].r32++; rf[r32w[i]].r16++;
     });
 
-    // R16
-    const r16 = [
-      [r32w[0],r32w[1]],[r32w[2],r32w[3]],[r32w[4],r32w[5]],[r32w[6],r32w[7]],
-      [r32w[8],r32w[9]],[r32w[10],r32w[11]],[r32w[12],r32w[13]],[r32w[14],r32w[15]],
-    ];
+    // R16 — threaded through the official feeders
+    const r16 = R16_FEED.map(([x, y]) => [r32w[x], r32w[y]]);
     const r16r = r16.map(([a, b]) => koPlay(a, b));
     const r16w = r16r.map(r => r.w);
     r16.forEach(([a, b], i) => {
@@ -531,12 +617,9 @@ function runMC() {
     });
 
     // QF
-    const qf = [
-      [r16w[0],r16w[1]],[r16w[2],r16w[3]],[r16w[4],r16w[5]],[r16w[6],r16w[7]],
-    ];
+    const qf = QF_FEED.map(([x, y]) => [r16w[x], r16w[y]]);
     const qfr = qf.map(([a, b]) => koPlay(a, b));
     const qfw = qfr.map(r => r.w);
-    const qfl = qfr.map((r, i) => qf[i][r.w === qf[i][0] ? 1 : 0]);
     qf.forEach(([a, b], i) => {
       koA.qf[i][a] = (koA.qf[i][a] || 0) + 1;
       koB.qf[i][b] = (koB.qf[i][b] || 0) + 1;
@@ -545,7 +628,7 @@ function runMC() {
     });
 
     // SF
-    const sf = [[qfw[0],qfw[1]],[qfw[2],qfw[3]]];
+    const sf = SF_FEED.map(([x, y]) => [qfw[x], qfw[y]]);
     const sfr = sf.map(([a, b]) => koPlay(a, b));
     const sfw = sfr.map(r => r.w);
     const sfl = sfr.map((r, i) => sf[i][r.w === sf[i][0] ? 1 : 0]);
@@ -624,42 +707,31 @@ function runMC() {
       else { tbl[tA].d++; tbl[tB].d++; tbl[tA].pts++; tbl[tB].pts++; }
     });
     GS[g].forEach(t => { tbl[t].gd = tbl[t].gf - tbl[t].ga; });
-    groupStandings[g] = Object.values(tbl).sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
+    groupStandings[g] = Object.values(tbl).sort(byStanding);
   }
 
   // KO slot predictions
-  const r32Labels = [
-    'A1 vs B2','B1 vs A2','C1 vs D2','D1 vs C2',
-    'E1 vs F2','F1 vs E2','G1 vs H2','H1 vs G2',
-    'I1 vs J2','J1 vs I2','K1 vs L2','L1 vs K2',
-    'Best 3rd · #1 vs #2','Best 3rd · #3 vs #4',
-    'Best 3rd · #5 vs #6','Best 3rd · #7 vs #8',
-  ];
-  // ── COHERENT THREADED BRACKET ──────────────────────────────────────
-  // The bracket is built as ONE real tournament path, not an independent
-  // "most likely team per slot" montage (which let a team appear to lose in
-  // one round yet reappear in the next). Participants come from the predicted
-  // group standings; each tie's winner is carried forward as the next round's
-  // entrant. This makes it structurally impossible for an eliminated team to
-  // advance, for a team to play itself, or for a duplicate matchup to occur:
-  // every game's two teams are the winners of two DISTINCT feeder games.
+  // ── COHERENT THREADED BRACKET (official FIFA topology) ─────────────
+  // Participants come from the predicted group tables; each tie's winner is
+  // carried forward through the real match wiring (M73–M104). Because every
+  // later game is fed by two DISTINCT earlier games, it's structurally
+  // impossible for an eliminated team to reappear or for a team to play itself.
 
-  // Qualifiers straight from the predicted group tables (so the bracket is
-  // consistent with the standings shown on the Groups tab).
+  // Qualifiers + best thirds straight from the predicted standings.
   const q = {};
   for (const g of Object.keys(GS)) q[g] = { p1: groupStandings[g][0].t, p2: groupStandings[g][1].t };
-  const thirdsRanked = Object.keys(GS)
-    .map(g => ({ g, ...groupStandings[g][2] }))
-    .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf)
-    .slice(0, 8).map(x => x.t);
+  const thirdRowD = {}; for (const g of Object.keys(GS)) thirdRowD[g] = groupStandings[g][2];
+  const thirds = best3rds(thirdRowD);
+  const thirdAssign = assignThirds(thirds.groups);
+  const r32pairs = buildR32(q, thirds);
 
-  const r32pairs = [
-    [q.A.p1, q.B.p2], [q.B.p1, q.A.p2], [q.C.p1, q.D.p2], [q.D.p1, q.C.p2],
-    [q.E.p1, q.F.p2], [q.F.p1, q.E.p2], [q.G.p1, q.H.p2], [q.H.p1, q.G.p2],
-    [q.I.p1, q.J.p2], [q.J.p1, q.I.p2], [q.K.p1, q.L.p2], [q.L.p1, q.K.p2],
-    [thirdsRanked[0], thirdsRanked[1]], [thirdsRanked[2], thirdsRanked[3]],
-    [thirdsRanked[4], thirdsRanked[5]], [thirdsRanked[6], thirdsRanked[7]],
-  ];
+  // Human-readable slot label, e.g. "M74 · E1 v 3rd C".
+  const slotCode = side => side[0] === 'win' ? side[1] + '1' : side[1] + '2';
+  const r32Labels = R32_SLOTS.map((s, i) => {
+    const a = slotCode(s.a);
+    const b = s.b[0] === 'third' ? `3rd ${thirdAssign[i] || '—'}` : slotCode(s.b);
+    return `M${73 + i} · ${a} v ${b}`;
+  });
 
   // Head-to-head advancement probability for tA (regulation win + a share of
   // the draw, resolved in extra time / penalties proportional to strength).
@@ -696,11 +768,11 @@ function runMC() {
   };
   const loserOf = g => (g.tA === g.winner ? g.tB : g.tA);
 
-  // Thread winners forward, round by round.
+  // Thread winners forward through the official feeder topology.
   const r32 = r32pairs.map(([a, b], i) => ({ ...koGame('r32', i, a, b), label: r32Labels[i] }));
-  const r16 = Array.from({ length: 8 }, (_, i) => koGame('r16', i, r32[2 * i].winner, r32[2 * i + 1].winner));
-  const qf  = Array.from({ length: 4 }, (_, i) => koGame('qf',  i, r16[2 * i].winner, r16[2 * i + 1].winner));
-  const sf  = Array.from({ length: 2 }, (_, i) => koGame('sf',  i, qf[2 * i].winner,  qf[2 * i + 1].winner));
+  const r16 = R16_FEED.map(([x, y], i) => koGame('r16', i, r32[x].winner, r32[y].winner));
+  const qf  = QF_FEED.map(([x, y], i) => koGame('qf', i, r16[x].winner, r16[y].winner));
+  const sf  = SF_FEED.map(([x, y], i) => koGame('sf', i, qf[x].winner, qf[y].winner));
   const final = koGame('f', 0, sf[0].winner, sf[1].winner);
   const tp = koGame('tp', 0, loserOf(sf[0]), loserOf(sf[1]));   // 3rd place = losing semi-finalists
   const bracket = { r32, r16, qf, sf, final, tp };
@@ -1183,11 +1255,9 @@ export default function WC2026() {
         {/* Bracket context note */}
         <div style={{ ...sx.card, marginTop: '16px', fontSize: '0.62rem', color: dimmer, lineHeight: 1.8 }}>
           <div style={{ ...sx.label, marginBottom: '6px' }}>Bracket structure</div>
-          R32: Groups paired (A↔B, C↔D, E↔F, G↔H, I↔J, K↔L). 1st place vs runner-up from adjacent group.
-          8 best 3rd-place teams (ranked pts→GD→GF) seed into slots #13–16, play each other in R32.
-          R16: R32 winners from same group-pair play each other. Winners advance to QF.
-          <br />SF path 1: Groups A/B/C/D/E/F/G/H section. SF path 2: Groups I/J/K/L + 3rd-place bracket.
-          France &amp; Spain protected in opposite halves until the Final.
+          Official FIFA 2026 layout (matches 73–104). The 32 qualifiers are placed into fixed Round-of-32 slots: group winners are never paired with other winners — across the 16 ties, 8 pit a winner against a best-third, 4 a winner against a runner-up, and 4 a runner-up against a runner-up.
+          <br />The 8 best 3rd-place teams (ranked by points → goal difference → goals scored → FIFA World Ranking) are slotted by FIFA's Annex C: each third-place team can only fill a winner-slot drawn from that slot's allowed five-group set, and never faces a side from its own group.
+          <br />Winners then thread forward through the real match wiring (R16 89–96, QF 97–100, SF, final) — so the two tournament halves and every quarter follow the published bracket rather than a simple adjacent-group pattern.
         </div>
       </div>
     );
