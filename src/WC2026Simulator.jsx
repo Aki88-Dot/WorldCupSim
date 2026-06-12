@@ -807,6 +807,7 @@ export default function WC2026() {
   const [results, setResults] = useState(loadResults);
   const [injuries, setInjuries] = useState(loadInjuries);
   const [injDraft, setInjDraft] = useState({ team: '', n: '', side: 'att', w: 0.08, status: 'out' });
+  const [scoreDraft, setScoreDraft] = useState({});   // in-progress score boxes, keyed per fixture
   const [computing, setComputing] = useState(false);
 
   // Re-condition and re-simulate whenever results OR injuries change (and on
@@ -844,7 +845,7 @@ export default function WC2026() {
       return { ...prev, ko };
     });
   };
-  const clearAllResults = () => setResults({ group: {}, ko: [] });
+  const clearAllResults = () => { setResults({ group: {}, ko: [] }); setScoreDraft({}); };
 
   // ── Injury-entry handlers ──
   const setInjStatus = (team, idx, status) => setInjuries(prev => ({
@@ -1477,6 +1478,13 @@ export default function WC2026() {
       padding: '5px 0', outline: 'none',
     };
     const clean = v => v.replace(/[^0-9]/g, '').slice(0, 2);
+    // Show in-progress typing (draft) if present, else the committed result.
+    // This lets a single box hold a digit before its partner is filled.
+    const shownVal = (key, committed) => scoreDraft[key] || [
+      committed[0] === '' || committed[0] == null ? '' : String(committed[0]),
+      committed[1] === '' || committed[1] == null ? '' : String(committed[1]),
+    ];
+    const putDraft = (key, pair) => setScoreDraft(d => ({ ...d, [key]: pair }));
 
     const row = (k, tA, tB, val, opts = {}) => {
       const { koMode, winSel, onScore, onWin } = opts;
@@ -1537,9 +1545,13 @@ export default function WC2026() {
           {Object.keys(GS).map(g => (
             <div key={g} style={sx.card}>
               <div style={{ ...sx.label, marginBottom: '6px', color: gold }}>Group {g}</div>
-              {groupFix[g].map(([tA, tB], i) => row(`${g}-${i}`, tA, tB, groupVal(tA, tB), {
-                onScore: (a, b) => setGroupScore(tA, tB, a, b),
-              }))}
+              {groupFix[g].map(([tA, tB], i) => {
+                const dk = `g|${tA}|${tB}`;
+                const shown = shownVal(dk, groupVal(tA, tB));
+                return row(`${g}-${i}`, tA, tB, shown, {
+                  onScore: (a, b) => { putDraft(dk, [a, b]); setGroupScore(tA, tB, a, b); },
+                });
+              })}
             </div>
           ))}
         </div>
@@ -1554,11 +1566,13 @@ export default function WC2026() {
             <div key={label} style={sx.card}>
               <div style={{ ...sx.label, marginBottom: '6px', color: gold }}>{label}</div>
               {games.map((gm, i) => {
-                const [a, b, win] = koVal(gm.tA, gm.tB);
-                return row(`${label}-${i}`, gm.tA, gm.tB, [a, b], {
+                const dk = `k|${gm.tA}|${gm.tB}`;
+                const [ca, cb, win] = koVal(gm.tA, gm.tB);
+                const shown = shownVal(dk, [ca, cb]);
+                return row(`${label}-${i}`, gm.tA, gm.tB, shown, {
                   koMode: true, winSel: win,
-                  onScore: (na, nb) => setKOScore(gm.tA, gm.tB, na, nb, win),
-                  onWin: w => setKOScore(gm.tA, gm.tB, a, b, w),
+                  onScore: (na, nb) => { putDraft(dk, [na, nb]); setKOScore(gm.tA, gm.tB, na, nb, win); },
+                  onWin: w => setKOScore(gm.tA, gm.tB, shown[0], shown[1], w),
                 });
               })}
             </div>
