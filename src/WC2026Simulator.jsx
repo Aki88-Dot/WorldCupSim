@@ -12,21 +12,35 @@ import { useState, useEffect } from "react";
 const MU = 1.45;
 const NSIMS = 5000;
 
-// ── GROUP ASSIGNMENTS (confirmed: ESPN / NBC Sports / Yahoo Sports) ──
-const GS = {
-  A:['Mexico','South Korea','South Africa','Czechia'],
-  B:['Canada','Qatar','Switzerland','Bosnia-Herz.'],
-  C:['Brazil','Morocco','Haiti','Scotland'],
-  D:['USA','Paraguay','Australia','Türkiye'],
-  E:['Germany','Curaçao',"Côte d'Ivoire",'Ecuador'],
-  F:['Netherlands','Japan','Tunisia','Sweden'],
-  G:['Belgium','Egypt','Iran','New Zealand'],
-  H:['Spain','Cape Verde','Uruguay','Saudi Arabia'],
-  I:['France','Senegal','Iraq','Norway'],
-  J:['Argentina','Algeria','Austria','Jordan'],
-  K:['Portugal','DR Congo','Uzbekistan','Colombia'],
-  L:['England','Croatia','Ghana','Panama'],
-};
+// ── ACTUAL ROUND OF 32 (group stage complete; bracket fixed) ───────
+// The 32 qualified teams in their official R32 slots (matches 73–88),
+// confirmed from the completed group stage (CBS / Yahoo / ESPN, Jun 2026).
+// Order is the official match order; [a, b] is just slot order, not seeding.
+const R32_FIXED = [
+  ['South Africa', 'Canada'],         // M73  A2 v B2
+  ['Germany', 'Paraguay'],            // M74  E1 v 3rd D
+  ['Netherlands', 'Morocco'],         // M75  F1 v C2
+  ['Brazil', 'Japan'],                // M76  C1 v F2
+  ['France', 'Sweden'],               // M77  I1 v 3rd F
+  ["Côte d'Ivoire", 'Norway'],        // M78  E2 v I2
+  ['Mexico', 'Ecuador'],              // M79  A1 v 3rd E
+  ['England', 'DR Congo'],            // M80  L1 v 3rd K
+  ['USA', 'Bosnia-Herz.'],            // M81  D1 v 3rd B
+  ['Belgium', 'Senegal'],             // M82  G1 v 3rd I
+  ['Portugal', 'Croatia'],            // M83  K2 v L2
+  ['Spain', 'Austria'],               // M84  H1 v J2
+  ['Switzerland', 'Algeria'],         // M85  B1 v 3rd J
+  ['Argentina', 'Cape Verde'],        // M86  J1 v H2
+  ['Colombia', 'Ghana'],              // M87  K1 v 3rd L
+  ['Australia', 'Egypt'],             // M88  D2 v G2
+];
+const R32_LABELS = [
+  'M73 · A2 v B2', 'M74 · E1 v 3rd', 'M75 · F1 v C2', 'M76 · C1 v F2',
+  'M77 · I1 v 3rd', 'M78 · E2 v I2', 'M79 · A1 v 3rd', 'M80 · L1 v 3rd',
+  'M81 · D1 v 3rd', 'M82 · G1 v 3rd', 'M83 · K2 v L2', 'M84 · H1 v J2',
+  'M85 · B1 v 3rd', 'M86 · J1 v H2', 'M87 · K1 v 3rd', 'M88 · D2 v G2',
+];
+const KO_TEAMS = [...new Set(R32_FIXED.flat())];
 
 // ── TEAM RATINGS  att/def relative to world average (1.00) ──
 // Sources: FIFA Rankings Apr 2026 · BetMGM/FanDuel implied probs
@@ -81,30 +95,6 @@ const T = {
   'New Zealand':   {a:0.80,d:0.85,f:'🇳🇿',c:'#444'},
   'Curaçao':       {a:0.75,d:0.80,f:'🇨🇼',c:'#003DA5'},
 };
-
-// FIFA Men's World Ranking (Apr 1 2026 snapshot, via ESPN/Wikipedia) for all
-// 48 finalists. Used ONLY as the final tiebreaker when teams are level on
-// points, goal difference, and goals scored — the official best-thirds order.
-const FIFA_RANK = {
-  France: 1, Spain: 2, Argentina: 3, England: 4, Portugal: 5, Brazil: 6,
-  Netherlands: 7, Morocco: 8, Belgium: 9, Germany: 10, Croatia: 11, Colombia: 13,
-  Senegal: 14, Mexico: 15, USA: 16, Uruguay: 17, Japan: 18, Switzerland: 19,
-  Iran: 21, 'Türkiye': 22, Ecuador: 23, Austria: 24, 'South Korea': 25,
-  Australia: 27, Algeria: 28, Egypt: 29, Canada: 30, Norway: 31, Panama: 33,
-  "Côte d'Ivoire": 34, Sweden: 38, Paraguay: 40, Czechia: 41, Scotland: 43,
-  Tunisia: 44, 'DR Congo': 46, Uzbekistan: 50, Qatar: 55, Iraq: 57,
-  'South Africa': 60, 'Saudi Arabia': 61, Jordan: 63, 'Bosnia-Herz.': 65,
-  'Cape Verde': 69, Ghana: 74, 'Curaçao': 82, Haiti: 83, 'New Zealand': 85,
-};
-
-// Official ranking order: points → goal difference → goals scored → FIFA rank
-// (lower rank number is better, so it sorts ascending). Shared by group tables
-// and the best-third comparison so the whole qualification path is consistent.
-const byStanding = (a, b) =>
-  b.pts - a.pts ||
-  b.gd - a.gd ||
-  b.gf - a.gf ||
-  (FIFA_RANK[a.t] || 999) - (FIFA_RANK[b.t] || 999);
 
 // ── SIMULATION UTILITIES ──────────────────────────────────────────
 
@@ -177,34 +167,21 @@ function getAD(team, ctx = {}) {
 //    only needed when a tie is settled on penalties / can't be inferred)
 //
 // Examples (commented out — fill in once the tournament kicks off):
-// Optional code-level seed. You can pre-fill results here, but the normal
-// way to enter scores is now the "Results" tab in the app — those are saved
-// in your browser (on a deployed site) and merged over this seed on load.
-//
-//  • Group games: "TeamA|TeamB": [goalsA, goalsB]  (either team order works)
-//  • Knockout games: { a, b, ga, gb, pens?, win? }  (win names the advancer)
+// Optional code-level seed for completed knockout games. The normal way to
+// enter scores is the "Results" tab — those are saved in your browser (on a
+// deployed site) and merged over this seed on load.
+//   • Knockout games: { a, b, ga, gb, pens?, win? }  (win names the advancer)
 const SEED_RESULTS = {
-  group: {
-    // 'Brazil|Scotland': [2, 0],
-  },
   ko: [
-    // { a: 'France', b: 'Senegal', ga: 2, gb: 0 },
+    // { a: 'France', b: 'Sweden', ga: 2, gb: 0 },
   ],
 };
 
 // LIVE holds the results the engine currently conditions on. The component
 // sets this from app state (seed + UI entries) immediately before each
-// simulation run, so actualGroup / actualKO always read the latest scores.
-let LIVE = { group: { ...SEED_RESULTS.group }, ko: [...SEED_RESULTS.ko] };
+// simulation run, so actualKO always reads the latest scores.
+let LIVE = { ko: [...SEED_RESULTS.ko] };
 
-// Completed group result for a pair, oriented to the (tA, tB) call order.
-function actualGroup(tA, tB) {
-  const r = LIVE.group[`${tA}|${tB}`];
-  if (r) return { gA: r[0], gB: r[1] };
-  const r2 = LIVE.group[`${tB}|${tA}`];
-  if (r2) return { gA: r2[1], gB: r2[0] };
-  return null;
-}
 // Completed knockout result for a pair, oriented to the (tA, tB) call order.
 function actualKO(tA, tB) {
   for (const m of LIVE.ko) {
@@ -222,22 +199,22 @@ function actualKO(tA, tB) {
   }
   return null;
 }
-const N_RESULTS = () => Object.keys(LIVE.group).length + LIVE.ko.length;
+const N_RESULTS = () => LIVE.ko.length;
 
 // ── RESULTS PERSISTENCE (guarded) ─────────────────────────────────
 // On a deployed site this persists entries across reloads via localStorage.
 // In sandboxed previews localStorage may be unavailable, so every access is
 // wrapped — it silently degrades to in-memory (session-only) and never throws.
-const LS_KEY = 'wc2026_live_results';
+const LS_KEY = 'wc2026_ko_results';
 function loadResults() {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       const r = JSON.parse(raw);
-      if (r && r.group && Array.isArray(r.ko)) return r;
+      if (r && Array.isArray(r.ko)) return r;
     }
   } catch (e) { /* sandboxed / disabled — fall through */ }
-  return { group: { ...SEED_RESULTS.group }, ko: [...SEED_RESULTS.ko] };
+  return { ko: [...SEED_RESULTS.ko] };
 }
 function saveResults(r) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(r)); } catch (e) { /* no-op */ }
@@ -388,15 +365,6 @@ function sampleScore(m, result, seedKey) {
   return aWins ? [wG, lG] : [lG, wG];
 }
 
-function predScGroup(tA, tB, ctx = {}) {
-  const m = analyzeMatch(tA, tB, ctx);
-  const edge = m.pWinA - m.pWinB;
-  const result = Math.abs(edge) < 0.075 ? 'D' : edge > 0 ? 'A' : 'B';
-  const [gA, gB] = sampleScore(m, result, `${tA}|${tB}`);
-  const prob = pmf(m.xgA, gA) * pmf(m.xgB, gB);
-  return { gA, gB, score: `${gA}-${gB}`, prob, m };
-}
-
 // Knockout game. Mirrors the real flow the simulation engine already uses
 // for win probabilities: 90 minutes → extra time → penalty shootout if still
 // level. The predicted advancer is never shown losing, but a tight tie can
@@ -435,130 +403,23 @@ function predScKO(tA, tB, winner, ctx = {}) {
   return { score: `${lvl}-${lvl}`, aet: true, pens: `${winP}-${loseP}` };
 }
 
-// ── GROUP STAGE SIMULATION ────────────────────────────────────────
-
-function simGrp(g) {
-  const teams = GS[g];
-  const pts = {}, gd = {}, gf = {};
-  teams.forEach(t => { pts[t] = 0; gd[t] = 0; gf[t] = 0; });
-  const scores = []; let spN = 0;
-  const fx = [];
-  for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) fx.push([teams[i], teams[j]]);
-  fx.forEach(([tA, tB]) => {
-    let gA, gB;
-    const act = actualGroup(tA, tB);
-    if (act) {                       // completed game — lock in the real score
-      gA = act.gA; gB = act.gB;
-    } else {                         // not played yet — simulate
-      const ctx = {};
-      if (tA === 'Spain' || tB === 'Spain') ctx.spN = ++spN;
-      const r = sg(tA, tB, false, ctx);
-      gA = r.gA; gB = r.gB;
-    }
-    scores.push({ tA, tB, gA, gB });
-    gf[tA] += gA; gf[tB] += gB;
-    gd[tA] += (gA - gB); gd[tB] += (gB - gA);
-    if (gA > gB) pts[tA] += 3;
-    else if (gB > gA) pts[tB] += 3;
-    else { pts[tA]++; pts[tB]++; }
-  });
-  const standings = teams
-    .map(t => ({ t, pts: pts[t], gd: gd[t], gf: gf[t] }))
-    .sort(byStanding);
-  return { standings, scores, fx };
-}
-
-// ── OFFICIAL R32 BRACKET TOPOLOGY (FIFA 2026, matches 73–100) ──────
-// Each R32 slot lists its two feeders. 'win'/'run' = that group's winner /
-// runner-up; 'third' = a best-third whose group lies in the allowed set
-// (FIFA Annex C). Source: FIFA / USA TODAY official match list. Note that
-// group winners never meet other winners in the R32.
-const R32_SLOTS = [
-  { a: ['run', 'A'], b: ['run', 'B'] },                          // M73
-  { a: ['win', 'E'], b: ['third', ['A','B','C','D','F']] },      // M74
-  { a: ['win', 'F'], b: ['run', 'C'] },                          // M75
-  { a: ['win', 'C'], b: ['run', 'F'] },                          // M76
-  { a: ['win', 'I'], b: ['third', ['C','D','F','G','H']] },      // M77
-  { a: ['run', 'E'], b: ['run', 'I'] },                          // M78
-  { a: ['win', 'A'], b: ['third', ['C','E','F','H','I']] },      // M79
-  { a: ['win', 'L'], b: ['third', ['E','H','I','J','K']] },      // M80
-  { a: ['win', 'D'], b: ['third', ['B','E','F','I','J']] },      // M81
-  { a: ['win', 'G'], b: ['third', ['A','E','H','I','J']] },      // M82
-  { a: ['run', 'K'], b: ['run', 'L'] },                          // M83
-  { a: ['win', 'H'], b: ['run', 'J'] },                          // M84
-  { a: ['win', 'B'], b: ['third', ['E','F','G','I','J']] },      // M85
-  { a: ['win', 'J'], b: ['run', 'H'] },                          // M86
-  { a: ['win', 'K'], b: ['third', ['D','E','I','J','L']] },      // M87
-  { a: ['run', 'D'], b: ['run', 'G'] },                          // M88
-];
-// Feeder topology for later rounds, as indices into the previous round's
-// match array (matches 89–100). R16[i] = winners of R32[x],R32[y], etc.
+// ── KNOCKOUT FEEDER TOPOLOGY (FIFA 2026, matches 89–100) ───────────
+// Indices into the previous round's match array. R16[i] = winners of
+// R32[x],R32[y], etc. (R32 itself is the fixed bracket defined at the top.)
 const R16_FEED = [[1,4],[0,2],[3,5],[6,7],[10,11],[8,9],[13,15],[12,14]]; // M89–M96 ← R32 idx
 const QF_FEED  = [[0,1],[4,5],[2,3],[6,7]];                              // M97–M100 ← R16 idx
 const SF_FEED  = [[0,1],[2,3]];                                         // SF ← QF idx
-// The 8 R32 slots that take a best-third, with their allowed group sets.
-const THIRD_SLOTS = R32_SLOTS
-  .map((s, i) => ({ i, from: s.b[0] === 'third' ? s.b[1] : null }))
-  .filter(s => s.from);
-
-// FIFA Annex C: assign each qualifying third-place GROUP to a third-slot,
-// respecting the allowed sets, as a deterministic bipartite perfect matching
-// (valid for every one of the 495 possible 8-of-12 combinations).
-function assignThirds(thirdGroups) {
-  const order = [...thirdGroups].sort();   // set-deterministic ordering
-  const assign = {}; const used = new Set();
-  const bt = k => {
-    if (k === THIRD_SLOTS.length) return true;
-    const slot = THIRD_SLOTS[k];
-    for (const g of order) {
-      if (used.has(g) || !slot.from.includes(g)) continue;
-      used.add(g); assign[slot.i] = g;
-      if (bt(k + 1)) return true;
-      used.delete(g); delete assign[slot.i];
-    }
-    return false;
-  };
-  bt(0);
-  return assign;   // R32 slot index -> group letter
-}
-
-// Best 8 third-place teams → ranked groups + team-by-group, using the four
-// official tiebreakers (byStanding: points → GD → goals → FIFA rank).
-function best3rds(thirdRowByGroup) {
-  const ranked = Object.keys(thirdRowByGroup)
-    .map(g => ({ g, ...thirdRowByGroup[g] }))
-    .sort(byStanding).slice(0, 8);
-  const teamByGroup = {}; ranked.forEach(x => { teamByGroup[x.g] = x.t; });
-  return { groups: ranked.map(x => x.g), teamByGroup };
-}
-
-// Build the 16 R32 team pairs from winners/runners-up (q) and the best thirds.
-function buildR32(q, thirds) {
-  const assign = assignThirds(thirds.groups);
-  const teamFor = (side, slotIdx) => {
-    const [kind, arg] = side;
-    if (kind === 'win') return q[arg].p1;
-    if (kind === 'run') return q[arg].p2;
-    return thirds.teamByGroup[assign[slotIdx]];   // 'third'
-  };
-  return R32_SLOTS.map((s, i) => [teamFor(s.a, i), teamFor(s.b, i)]);
-}
 
 // ── MONTE CARLO ENGINE ─────────────────────────────────────────────
 
 function runMC() {
-  const wf = {}, rf = {}, gsf = {}, gsa = {};
+  const wf = {}, rf = {};
   const koA = {}, koB = {}, koW = {};
   const rounds = ['r32', 'r16', 'qf', 'sf', 'f', 'tp'];
   const rSz = { r32: 16, r16: 8, qf: 4, sf: 2, f: 1, tp: 1 };
 
-  Object.keys(GS).forEach(g => {
-    gsf[g] = Array.from({ length: 6 }, () => ({}));
-    gsa[g] = {};
-    GS[g].forEach(t => {
-      wf[t] = 0; rf[t] = { r32: 0, r16: 0, qf: 0, sf: 0, f: 0, w: 0 };
-      gsa[g][t] = { pts: 0, gd: 0, gf: 0, ga: 0, w: 0, d: 0, l: 0 };
-    });
+  KO_TEAMS.forEach(t => {
+    wf[t] = 0; rf[t] = { r32: 0, r16: 0, qf: 0, sf: 0, f: 0, w: 0 };
   });
   rounds.forEach(rnd => {
     const n = rSz[rnd];
@@ -571,31 +432,8 @@ function runMC() {
   const koPlay = (a, b) => { const act = actualKO(a, b); return act ? { w: act.winner } : sg(a, b, true); };
 
   for (let s = 0; s < NSIMS; s++) {
-    const gr = {}; for (const g of Object.keys(GS)) gr[g] = simGrp(g);
-
-    // Accumulate group stats
-    for (const [g, res] of Object.entries(gr)) {
-      res.scores.forEach((sc, i) => {
-        const k = `${sc.gA}-${sc.gB}`;
-        gsf[g][i][k] = (gsf[g][i][k] || 0) + 1;
-        const ag = gsa[g];
-        if (sc.gA > sc.gB) { ag[sc.tA].w++; ag[sc.tB].l++; }
-        else if (sc.gB > sc.gA) { ag[sc.tB].w++; ag[sc.tA].l++; }
-        else { ag[sc.tA].d++; ag[sc.tB].d++; }
-      });
-      res.standings.forEach(({ t, pts, gd, gf }) => {
-        const a = gsa[g][t]; a.pts += pts; a.gd += gd; a.gf += gf; a.ga += gf - gd;
-      });
-    }
-
-    // Qualifiers
-    const q = {};
-    for (const [g, r] of Object.entries(gr)) q[g] = { p1: r.standings[0].t, p2: r.standings[1].t };
-    const thirdRow = {}; for (const [g, r] of Object.entries(gr)) thirdRow[g] = r.standings[2];
-    const thirds = best3rds(thirdRow);
-
-    // R32 — official slot topology + Annex C third-place assignment
-    const r32 = buildR32(q, thirds);
+    // R32 is fixed — the actual qualified teams in their real slots.
+    const r32 = R32_FIXED;
     const r32r = r32.map(([a, b]) => koPlay(a, b));
     const r32w = r32r.map(r => r.w);
     r32.forEach(([a, b], i) => {
@@ -655,83 +493,13 @@ function runMC() {
     rf[fnr.w].w++; wf[fnr.w] = (wf[fnr.w] || 0) + 1;
   }
 
-  // Normalize group accumulators
-  for (const teams of Object.values(gsa))
-    for (const v of Object.values(teams))
-      for (const k of ['pts','gd','gf','ga','w','d','l']) v[k] /= NSIMS;
-
-  const top = obj => Object.entries(obj).sort((a, b) => b[1] - a[1])[0]?.[0] || '?';
-  const topN = (n, obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
-
-  // Group game predictions — analytical conditional-mode scorelines
-  const groupGames = {};
-  for (const g of Object.keys(GS)) {
-    const teams = GS[g]; let spN = 0, fi = 0;
-    const fx = [];
-    for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) {
-      const [tA, tB] = [teams[i], teams[j]];
-      const act = actualGroup(tA, tB);
-      if (act) {
-        // Completed game — show the real result, not a projection.
-        const gA = act.gA, gB = act.gB;
-        fx.push({
-          tA, tB, gA, gB, score: `${gA}-${gB}`, actual: true,
-          wA: gA > gB ? 100 : 0, wB: gB > gA ? 100 : 0, dr: gA === gB ? 100 : 0,
-        });
-      } else {
-        const ctx = {}; if (tA === 'Spain' || tB === 'Spain') ctx.spN = ++spN;
-        const pred = predScGroup(tA, tB, ctx);
-        const m = pred.m;
-        fx.push({
-          tA, tB, gA: pred.gA, gB: pred.gB, score: pred.score, xg: [m.xgA, m.xgB],
-          topFreq: +(pred.prob * 100).toFixed(0), top3: m.top3,
-          wA: +(m.pWinA * 100).toFixed(0), wB: +(m.pWinB * 100).toFixed(0),
-          dr: +(m.pDraw * 100).toFixed(0),
-        });
-      }
-      fi++;
-    }
-    groupGames[g] = fx;
-  }
-
-  // Group standings — derived from the SAME predicted scorelines shown in
-  // the fixtures list, so the W/D/L/GF/GA/Pts columns match exactly.
-  const groupStandings = {};
-  for (const g of Object.keys(GS)) {
-    const tbl = {};
-    GS[g].forEach(t => { tbl[t] = { t, w: 0, d: 0, l: 0, gf: 0, ga: 0, gd: 0, pts: 0 }; });
-    groupGames[g].forEach(({ tA, tB, gA, gB }) => {
-      tbl[tA].gf += gA; tbl[tA].ga += gB; tbl[tB].gf += gB; tbl[tB].ga += gA;
-      if (gA > gB) { tbl[tA].w++; tbl[tA].pts += 3; tbl[tB].l++; }
-      else if (gB > gA) { tbl[tB].w++; tbl[tB].pts += 3; tbl[tA].l++; }
-      else { tbl[tA].d++; tbl[tB].d++; tbl[tA].pts++; tbl[tB].pts++; }
-    });
-    GS[g].forEach(t => { tbl[t].gd = tbl[t].gf - tbl[t].ga; });
-    groupStandings[g] = Object.values(tbl).sort(byStanding);
-  }
-
-  // KO slot predictions
   // ── COHERENT THREADED BRACKET (official FIFA topology) ─────────────
-  // Participants come from the predicted group tables; each tie's winner is
-  // carried forward through the real match wiring (M73–M104). Because every
-  // later game is fed by two DISTINCT earlier games, it's structurally
+  // Starts from the FIXED Round of 32 (the actual qualified teams). Each tie's
+  // winner is carried forward through the real match wiring (M73–M104). Because
+  // every later game is fed by two DISTINCT earlier games, it's structurally
   // impossible for an eliminated team to reappear or for a team to play itself.
-
-  // Qualifiers + best thirds straight from the predicted standings.
-  const q = {};
-  for (const g of Object.keys(GS)) q[g] = { p1: groupStandings[g][0].t, p2: groupStandings[g][1].t };
-  const thirdRowD = {}; for (const g of Object.keys(GS)) thirdRowD[g] = groupStandings[g][2];
-  const thirds = best3rds(thirdRowD);
-  const thirdAssign = assignThirds(thirds.groups);
-  const r32pairs = buildR32(q, thirds);
-
-  // Human-readable slot label, e.g. "M74 · E1 v 3rd C".
-  const slotCode = side => side[0] === 'win' ? side[1] + '1' : side[1] + '2';
-  const r32Labels = R32_SLOTS.map((s, i) => {
-    const a = slotCode(s.a);
-    const b = s.b[0] === 'third' ? `3rd ${thirdAssign[i] || '—'}` : slotCode(s.b);
-    return `M${73 + i} · ${a} v ${b}`;
-  });
+  const r32pairs = R32_FIXED;
+  const r32Labels = R32_LABELS;
 
   // Head-to-head advancement probability for tA (regulation win + a share of
   // the draw, resolved in extra time / penalties proportional to strength).
@@ -788,7 +556,7 @@ function runMC() {
     }))
     .sort((a, b) => (b.w || 0) - (a.w || 0)).slice(0, 16);
 
-  return { groupGames, groupStandings, bracket, winProbs, reachProbs, nResults: N_RESULTS() };
+  return { bracket, winProbs, reachProbs, nResults: N_RESULTS() };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -801,7 +569,6 @@ const C = t => T[t]?.c || '#555';
 export default function WC2026() {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('prediction');
-  const [grp, setGrp] = useState('A');
   const [rnd, setRnd] = useState('r32');
   const [expanded, setExpanded] = useState(null);
   const [results, setResults] = useState(loadResults);
@@ -824,15 +591,6 @@ export default function WC2026() {
   }, [results, injuries]);
 
   // ── Score-entry handlers ──
-  const setGroupScore = (tA, tB, aStr, bStr) => {
-    setResults(prev => {
-      const group = { ...prev.group };
-      delete group[`${tA}|${tB}`]; delete group[`${tB}|${tA}`];
-      const a = clampGoal(aStr), b = clampGoal(bStr);
-      if (a != null && b != null) group[`${tA}|${tB}`] = [a, b];
-      return { ...prev, group };
-    });
-  };
   const setKOScore = (tA, tB, aStr, bStr, penWin) => {
     setResults(prev => {
       const ko = prev.ko.filter(m => !((m.a === tA && m.b === tB) || (m.a === tB && m.b === tA)));
@@ -845,7 +603,7 @@ export default function WC2026() {
       return { ...prev, ko };
     });
   };
-  const clearAllResults = () => { setResults({ group: {}, ko: [] }); setScoreDraft({}); };
+  const clearAllResults = () => { setResults({ ko: [] }); setScoreDraft({}); };
 
   // ── Injury-entry handlers ──
   const setInjStatus = (team, idx, status) => setInjuries(prev => ({
@@ -865,14 +623,6 @@ export default function WC2026() {
   };
   const resetInjuries = () => setInjuries(cloneInj(SEED_PLAYERS));
 
-  // Current stored value for an input pair (group), oriented to (tA,tB).
-  const groupVal = (tA, tB) => {
-    const r = results.group[`${tA}|${tB}`];
-    if (r) return [r[0], r[1]];
-    const r2 = results.group[`${tB}|${tA}`];
-    if (r2) return [r2[1], r2[0]];
-    return ['', ''];
-  };
   const koVal = (tA, tB) => {
     const m = results.ko.find(m => (m.a === tA && m.b === tB) || (m.a === tB && m.b === tA));
     if (!m) return ['', '', null];
@@ -883,9 +633,9 @@ export default function WC2026() {
     <div style={{ minHeight: '100vh', background: 'radial-gradient(900px 460px at 50% 30%, #243667 0%, rgba(36,54,103,0) 65%), linear-gradient(168deg,#131C42,#0B1029)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace' }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
       <div style={{ fontSize: '3rem', animation: 'spin 1.5s linear infinite' }}>⚽</div>
-      <div style={{ color: '#FFCE3A', fontWeight: 700, fontSize: '1rem', letterSpacing: '0.2em', marginTop: '20px' }}>SIMULATING TOURNAMENT</div>
-      <div style={{ color: '#93A4CC', fontSize: '0.72rem', marginTop: '8px', letterSpacing: '0.1em' }}>5,000 MONTE CARLO ITERATIONS · 104 GAMES EACH</div>
-      <div style={{ color: '#62749F', fontSize: '0.65rem', marginTop: '4px' }}>Poisson xG model · Injury adjustments · Bracket projection</div>
+      <div style={{ color: '#FFCE3A', fontWeight: 700, fontSize: '1rem', letterSpacing: '0.2em', marginTop: '20px' }}>SIMULATING KNOCKOUTS</div>
+      <div style={{ color: '#93A4CC', fontSize: '0.72rem', marginTop: '8px', letterSpacing: '0.1em' }}>5,000 MONTE CARLO ITERATIONS · ROUND OF 32 → FINAL</div>
+      <div style={{ color: '#62749F', fontSize: '0.65rem', marginTop: '4px' }}>Poisson xG model · Extra time &amp; penalties · Injury adjustments</div>
     </div>
   );
 
@@ -1100,75 +850,6 @@ export default function WC2026() {
     );
   };
 
-  // ── GROUPS TAB ──
-  const renderGroups = () => {
-    const standing = data.groupStandings[grp];
-    const games = data.groupGames[grp];
-    return (
-      <div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '16px' }}>
-          {Object.keys(GS).map(g => (
-            <button key={g} onClick={() => setGrp(g)} className={`wc-grp${grp === g ? ' on' : ''}`} style={{
-              ...sx.grpBtn,
-              background: grp === g ? 'linear-gradient(135deg,#1B2E5E,#16264E)' : 'none',
-              color: grp === g ? gold : dim,
-              borderColor: grp === g ? gold : border,
-            }}>
-              {g}
-            </button>
-          ))}
-        </div>
-
-        {/* Standings */}
-        <div style={{ ...sx.card, marginBottom: '14px', overflowX: 'auto' }}>
-          <div style={{ ...sx.label, marginBottom: '12px' }}>Group {grp} — Predicted Final Standings (from the fixtures below)</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem', minWidth: '420px' }}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${border}` }}>
-                {['', 'Team', 'W', 'D', 'L', 'GF', 'GA', 'GD', 'Pts'].map((h, j) => (
-                  <th key={j} style={{ padding: '4px 8px', textAlign: j > 1 ? 'right' : 'left', color: dimmer, fontWeight: 400, fontSize: '0.6rem', letterSpacing: '0.1em' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {standing.map((row, i) => (
-                <tr key={row.t} style={{ borderBottom: `1px solid #223354`, background: i < 2 ? '#1A2950' : i === 2 ? '#141E40' : 'none' }}>
-                  <td style={{ padding: '7px 8px', color: i < 2 ? green : i === 2 ? amber : red, fontSize: '0.65rem', fontWeight: 700 }}>
-                    {i < 2 ? '▲' : i === 2 ? '◆' : '▼'}
-                  </td>
-                  <td style={{ padding: '7px 8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '0.9rem' }}>{F(row.t)}</span>
-                      <span style={{ color: i < 2 ? '#fff' : silver }}>{row.t}</span>
-                    </div>
-                  </td>
-                  {[row.w, row.d, row.l, row.gf, row.ga, row.gd, row.pts].map((v, j) => (
-                    <td key={j} style={{
-                      padding: '7px 8px', textAlign: 'right',
-                      color: j === 6 ? gold : j === 5 ? (v > 0 ? green : v < 0 ? red : silver) : silver,
-                      fontWeight: j === 6 ? 700 : 400,
-                    }}>
-                      {j === 5 && v > 0 ? '+' : ''}{v}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={{ marginTop: '8px', fontSize: '0.58rem', color: dimmer }}>
-            ▲ Qualifies for R32 · ◆ 3rd place (may qualify as best 3rd) · ▼ Eliminated
-          </div>
-        </div>
-
-        {/* Fixtures */}
-        <div style={{ ...sx.label, marginBottom: '10px' }}>Group {grp} — All 6 Fixtures · Click any match for details</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: '8px' }}>
-          {games.map((g, i) => <MatchCard key={i} g={g} roundLabel={`Group ${grp}`} idx={i} isGroupGame />)}
-        </div>
-      </div>
-    );
-  };
-
   // ── BRACKET TAB ──
   const renderBracket = () => {
     const rounds = {
@@ -1256,9 +937,9 @@ export default function WC2026() {
         {/* Bracket context note */}
         <div style={{ ...sx.card, marginTop: '16px', fontSize: '0.62rem', color: dimmer, lineHeight: 1.8 }}>
           <div style={{ ...sx.label, marginBottom: '6px' }}>Bracket structure</div>
-          Official FIFA 2026 layout (matches 73–104). The 32 qualifiers are placed into fixed Round-of-32 slots: group winners are never paired with other winners — across the 16 ties, 8 pit a winner against a best-third, 4 a winner against a runner-up, and 4 a runner-up against a runner-up.
-          <br />The 8 best 3rd-place teams (ranked by points → goal difference → goals scored → FIFA World Ranking) are slotted by FIFA's Annex C: each third-place team can only fill a winner-slot drawn from that slot's allowed five-group set, and never faces a side from its own group.
-          <br />Winners then thread forward through the real match wiring (R16 89–96, QF 97–100, SF, final) — so the two tournament halves and every quarter follow the published bracket rather than a simple adjacent-group pattern.
+          The 32 teams that came through the group stage are placed in their actual Round-of-32 slots (matches 73–88), as confirmed after the group stage finished.
+          <br />Only the knockout games are simulated — there is no group-stage modelling here. Each tie's winner threads forward through the real match wiring (R16 89–96, QF 97–100, SF, final, third place), so every projected matchup follows the published bracket.
+          <br />Each tie is played the FIFA way: 90 minutes, then 30 minutes of extra time, then a penalty shootout if still level.
         </div>
       </div>
     );
@@ -1320,15 +1001,15 @@ export default function WC2026() {
       <div style={{ ...sx.card, fontSize: '0.65rem', color: dimmer, lineHeight: 1.9 }}>
         <div style={{ ...sx.label, color: dim, marginBottom: '8px' }}>Methodology & sources</div>
         {[
-          `Dixon-Coles Poisson model: xG(A vs B) = att_A ÷ def_B × μ  where μ=${MU} (calibrated to 2022 WC 2.69/game + 2026 qualifiers 2.8–3.3/game)`,
-          'Player-availability layer: key absences/doubts (Yamal, Mitoma, Gnabry, Romero, Davies, ter Stegen, Grealish …) cut a team\u2019s attack or defence by each player\u2019s weighted share — capped at \u221220% per side. Sourced from June 2026 reporting (ESPN, Sports Mole, SI, Yahoo) and editable live in the Injuries tab as fitness news breaks',
+          `Dixon-Coles Poisson model: xG(A vs B) = att_A ÷ def_B × μ  where μ=${MU} (calibrated to 2022 WC 2.69/game + 2026 group stage)`,
+          'Player-availability layer: key absences/doubts (Yamal, Neymar, Gnabry, Romero, Davies, ter Stegen, Grealish …) cut a team\u2019s attack or defence by each player\u2019s weighted share — capped at \u221220% per side. Editable live in the Injuries tab as fitness news breaks',
           'Host advantage: Mexico/USA/Canada att×1.09 · def×1.07',
-          'Knockout: 90min → Extra time (33% xG) → Penalty shootout (skill-weighted, ±15% from base 50%)',
-          'Team ratings calibrated from: FIFA rankings (Apr 2026) · BetMGM/FanDuel/DraftKings implied probs · Polymarket $1.5B trading volume · ESPN Power Rankings',
-          'Expert consensus incorporated: Carragher (Telegraph) · CBS SportsLine · Flashscore analysts · Oddschecker',
-          `Live results conditioning: completed games are locked in as facts — group tables re-form around real scores and the bracket re-runs from the actual qualifiers, so only unplayed matches are still simulated. With no results entered the output is a pure pre-tournament projection`,
-          `Scorelines: drawn from each match\u2019s xG-derived Poisson distribution (seeded per-matchup), conditioned on the predicted result — reproducing the real spread of 1-0s, 3-1s and the occasional 5-0, not a flattened average`,
-          `Monte Carlo: ${NSIMS.toLocaleString()} tournament simulations × 104 games = ${(NSIMS * 104).toLocaleString()} outcomes`,
+          'Knockout ties: 90min → Extra time (33% xG) → Penalty shootout (skill-weighted, ±15% from base 50%)',
+          'Team ratings calibrated from: FIFA rankings (2026) · BetMGM/FanDuel/DraftKings implied probs · ESPN Power Rankings · expert consensus',
+          'Fixed Round of 32: the 32 actual qualifiers in their real bracket slots (matches 73–88). The group stage is NOT simulated — only the knockout games are',
+          `Live results conditioning: completed knockout games are locked in as facts and the rest of the bracket re-simulates around them. With no results entered the output is a from-the-R32 projection`,
+          `Scorelines: drawn from each match\u2019s xG-derived Poisson distribution (seeded per-matchup), conditioned on the predicted result — reproducing the real spread of 1-0s, 3-1s and the occasional blowout, not a flattened average`,
+          `Monte Carlo: ${NSIMS.toLocaleString()} knockout simulations × 31 games = ${(NSIMS * 31).toLocaleString()} match outcomes`,
         ].map((line, i) => (
           <div key={i} style={{ paddingLeft: '10px', borderLeft: `2px solid ${border}`, marginBottom: '4px' }}>→ {line}</div>
         ))}
@@ -1461,12 +1142,6 @@ export default function WC2026() {
   // Rows are built by a plain function returning host elements (not a nested
   // component) so the score <input>s keep focus across the recompute re-render.
   const renderEnter = () => {
-    const groupFix = {};
-    Object.keys(GS).forEach(g => {
-      const t = GS[g]; const fx = [];
-      for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) fx.push([t[i], t[j]]);
-      groupFix[g] = fx;
-    });
     const koRounds = [
       ['Round of 32', data.bracket.r32], ['Round of 16', data.bracket.r16],
       ['Quarter-Finals', data.bracket.qf], ['Semi-Finals', data.bracket.sf],
@@ -1539,27 +1214,10 @@ export default function WC2026() {
           )}
         </div>
 
-        {/* Group stage entry */}
-        <div style={{ ...sx.label, marginBottom: '10px' }}>Group stage · 72 fixtures</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: '10px', marginBottom: '20px' }}>
-          {Object.keys(GS).map(g => (
-            <div key={g} style={sx.card}>
-              <div style={{ ...sx.label, marginBottom: '6px', color: gold }}>Group {g}</div>
-              {groupFix[g].map(([tA, tB], i) => {
-                const dk = `g|${tA}|${tB}`;
-                const shown = shownVal(dk, groupVal(tA, tB));
-                return row(`${g}-${i}`, tA, tB, shown, {
-                  onScore: (a, b) => { putDraft(dk, [a, b]); setGroupScore(tA, tB, a, b); },
-                });
-              })}
-            </div>
-          ))}
-        </div>
-
         {/* Knockout entry */}
-        <div style={{ ...sx.label, marginBottom: '4px' }}>Knockouts · matchups follow the results you enter</div>
+        <div style={{ ...sx.label, marginBottom: '4px' }}>Knockout results · enter scores as games are played</div>
         <div style={{ fontSize: '0.62rem', color: dimmer, marginBottom: '10px', lineHeight: 1.6 }}>
-          Ties shown are the model's current bracket — they firm up into the real matchups as group results go in. Enter each round as it's played; a level score reveals a penalty-winner toggle.
+          The Round of 32 is fixed; later ties shown are the model's current projection and firm up into real matchups as you enter earlier results. A level score reveals a penalty-winner toggle.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: '10px' }}>
           {koRounds.map(([label, games]) => (
@@ -1610,11 +1268,11 @@ export default function WC2026() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', paddingBottom: '14px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 'clamp(1.3rem,3.5vw,2rem)', fontWeight: 900, color: '#fff', letterSpacing: '0.06em' }}>2026 WORLD CUP SIMULATOR</span>
+              <span style={{ fontSize: 'clamp(1.3rem,3.5vw,2rem)', fontWeight: 900, color: '#fff', letterSpacing: '0.06em' }}>2026 WORLD CUP · KNOCKOUTS</span>
               <span style={{ background: gold, color: '#000', fontSize: '0.55rem', fontWeight: 700, padding: '2px 7px', letterSpacing: '0.15em', alignSelf: 'center' }}>BETA</span>
             </div>
             <div style={{ color: dim, fontSize: '0.62rem', letterSpacing: '0.14em', marginTop: '4px' }}>
-              {NSIMS.toLocaleString()} MONTE CARLO SIMULATIONS · POISSON xG MODEL · ALL 104 GAMES · FULL BRACKET
+              {NSIMS.toLocaleString()} MONTE CARLO SIMULATIONS · POISSON xG MODEL · ROUND OF 32 → FINAL
             </div>
             {data.nResults > 0 && (
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginTop: '7px', background: 'rgba(52,211,153,0.12)', border: `1px solid ${green}`, borderRadius: '5px', padding: '3px 9px' }}>
@@ -1631,7 +1289,7 @@ export default function WC2026() {
 
         {/* Tab bar */}
         <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, gap: 0, overflowX: 'auto' }}>
-          {[['prediction','🏆 Prediction'],['groups','⚽ Group Stage'],['bracket','🏅 Bracket'],['stats','📊 Statistics'],['enter','📝 Results'],['injuries','🩹 Injuries']].map(([id, label]) => (
+          {[['prediction','🏆 Prediction'],['bracket','🏅 Bracket'],['stats','📊 Statistics'],['enter','📝 Results'],['injuries','🩹 Injuries']].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} className={`wc-tab${tab === id ? ' on' : ''}`} style={{
               ...sx.tab,
               color: tab === id ? gold : dim,
@@ -1646,7 +1304,6 @@ export default function WC2026() {
       {/* Content */}
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '16px', animation: 'fadeIn .3s ease' }}>
         {tab === 'prediction' && renderPrediction()}
-        {tab === 'groups' && renderGroups()}
         {tab === 'bracket' && renderBracket()}
         {tab === 'stats' && renderStats()}
         {tab === 'enter' && renderEnter()}
